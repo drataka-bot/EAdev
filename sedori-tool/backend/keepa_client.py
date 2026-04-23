@@ -280,9 +280,20 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
     sales_30d = _sales("salesRankDrops30")
     sales_90d = _sales("salesRankDrops90")
 
+    # JAN/EAN を抽出 (楽天/Yahoo 検索用)
+    eans = product.get("eanList") or []
+    jan: Optional[str] = None
+    if isinstance(eans, list):
+        for code in eans:
+            s = str(code).strip()
+            if s.isdigit() and len(s) in (8, 13):
+                jan = s
+                break
+
     asin = product.get("asin")
     return {
         "asin": asin,
+        "jan": jan,
         "title": product.get("title"),
         "brand": product.get("brand"),
         "category": _category_name(product),

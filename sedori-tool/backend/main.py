@@ -1,10 +1,15 @@
-"""FastAPI エントリポイント。"""
+"""FastAPI エントリポイント。
+
+Amazon (Keepa) / 楽天市場 / Yahoo!ショッピング を一括取得し、
+仕入れ判断スコアを返す。
+"""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -12,7 +17,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from keepa_client import KeepaClient, KeepaError, normalize_product
+from rakuten_client import RakutenClient
 from scoring import ScoreInput, calc_score
+from yahoo_client import YahooClient
 
 load_dotenv()
 
@@ -21,6 +28,8 @@ log = logging.getLogger("sedori")
 
 KEEPA_API_KEY_ENV = os.getenv("KEEPA_API_KEY", "").strip()
 KEEPA_DOMAIN = int(os.getenv("KEEPA_DOMAIN", "5"))
+RAKUTEN_APP_ID_ENV = os.getenv("RAKUTEN_APP_ID", "").strip()
+YAHOO_CLIENT_ID_ENV = os.getenv("YAHOO_CLIENT_ID", "").strip()
 CORS_ORIGINS = [
     o.strip()
     for o in os.getenv("BACKEND_CORS_ORIGINS", "http://localhost:5173").split(",")
@@ -30,7 +39,7 @@ CORS_ORIGINS = [
 ASIN_RE = re.compile(r"^[A-Z0-9]{10}$")
 JAN_RE = re.compile(r"^\d{8}(\d{5})?$")  # 8 or 13 桁
 
-app = FastAPI(title="電脳せどりリサーチツール", version="1.0.0")
+app = FastAPI(title="電脳せどりリサーチツール", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -45,13 +54,16 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 class ResearchRequest(BaseModel):
     codes: list[str] = Field(default_factory=list, description="ASIN / JAN の配列")
-    api_key: Optional[str] = Field(default=None, description="UI から渡す Keepa API キー")
+    api_key: Optional[str] = Field(default=None, description="Keepa API キー")
+    rakuten_app_id: Optional[str] = Field(default=None, description="楽天 ApplicationId")
+    yahoo_client_id: Optional[str] = Field(default=None, description="Yahoo ClientID")
     default_purchase_price: Optional[int] = None
 
 
 class ProductItem(BaseModel):
     input_code: str
     asin: Optional[str]
+    jan: Optional[str] = None
     title: Optional[str] = None
     brand: Optional[str] = None
     category: Optional[str] = None
@@ -78,6 +90,16 @@ class ProductItem(BaseModel):
     buy_box_is_amazon: bool = False
     amazon_url: Optional[str] = None
     keepa_url: Optional[str] = None
+    # 仕入れ候補
+    rakuten_price: Optional[int] = None
+    rakuten_url: Optional[str] = None
+    rakuten_shop: Optional[str] = None
+    yahoo_price: Optional[int] = None
+    yahoo_url: Optional[str] = None
+    yahoo_shop: Optional[str] = None
+    cheapest_source_price: Optional[int] = None
+    cheapest_source: Optional[str] = None  # "rakuten" or "yahoo"
+    # スコア結果
     purchase_price: Optional[int] = None
     profit: Optional[int] = None
     profit_rate: Optional[float] = None
@@ -90,6 +112,7 @@ class ResearchResponse(BaseModel):
     total: int
     succeeded: int
     failed: int
+    sources: dict[str, bool]
 
 
 class ScoreRequest(BaseModel):
@@ -119,8 +142,12 @@ def _classify(code: str) -> str:
     return "invalid"
 
 
-def _resolve_api_key(supplied: Optional[str]) -> str:
-    key = (KEEPA_API_KEY_ENV or (supplied or "")).strip()
+def _resolve(env_val: str, supplied: Optional[str]) -> str:
+    return (env_val or (supplied or "")).strip()
+
+
+def _resolve_keepa_key(supplied: Optional[str]) -> str:
+    key = _resolve(KEEPA_API_KEY_ENV, supplied)
     if not key:
         raise HTTPException(
             status_code=400,
@@ -134,8 +161,13 @@ def _resolve_api_key(supplied: Optional[str]) -> str:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "keepa": bool(KEEPA_API_KEY_ENV),
+        "rakuten": bool(RAKUTEN_APP_ID_ENV),
+        "yahoo": bool(YAHOO_CLIENT_ID_ENV),
+    }
 
 
 @app.post("/api/score", response_model=ScoreResponse)
@@ -157,66 +189,96 @@ async def research(req: ResearchRequest) -> ResearchResponse:
     if not req.codes:
         raise HTTPException(status_code=400, detail="codes は必須です。")
 
-    api_key = _resolve_api_key(req.api_key)
+    keepa_key = _resolve_keepa_key(req.api_key)
+    rakuten_id = _resolve(RAKUTEN_APP_ID_ENV, req.rakuten_app_id)
+    yahoo_id = _resolve(YAHOO_CLIENT_ID_ENV, req.yahoo_client_id)
 
-    # 入力を正規化
-    cleaned: list[str] = []
+    # 入力の正規化 + 重複排除
+    seen: set[str] = set()
+    unique: list[str] = []
     for raw in req.codes:
         if raw is None:
             continue
         c = raw.strip().upper()
-        if c:
-            cleaned.append(c)
-
-    # 重複排除（順序保持）
-    seen: set[str] = set()
-    unique: list[str] = []
-    for c in cleaned:
-        if c not in seen:
+        if c and c not in seen:
             seen.add(c)
             unique.append(c)
 
     asin_targets: list[str] = []
     jan_targets: list[str] = []
-    invalid: list[str] = []
     for code in unique:
         kind = _classify(code)
         if kind == "asin":
             asin_targets.append(code)
         elif kind == "jan":
             jan_targets.append(code)
-        else:
-            invalid.append(code)
 
+    # ----- Keepa: JAN -> ASIN, 商品取得 -----
     try:
-        client = KeepaClient(api_key=api_key, domain=KEEPA_DOMAIN)
+        keepa = KeepaClient(api_key=keepa_key, domain=KEEPA_DOMAIN)
     except KeepaError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     input_to_asin: dict[str, Optional[str]] = {}
+    asin_to_product: dict[str, dict] = {}
     try:
-        # JAN -> ASIN
         if jan_targets:
-            jan_map = await client.jans_to_asins(jan_targets)
+            jan_map = await keepa.jans_to_asins(jan_targets)
             for jan, asin in jan_map.items():
                 input_to_asin[jan] = asin
                 if asin and asin not in seen:
                     asin_targets.append(asin)
                     seen.add(asin)
-
         for asin in list(asin_targets):
             input_to_asin.setdefault(asin, asin)
 
-        # ASIN 取得 (バッチ)
-        asin_to_product: dict[str, dict] = {}
-        async for batch_products, _processed in client.fetch_products(asin_targets):
+        async for batch_products, _processed in keepa.fetch_products(asin_targets):
             for p in batch_products:
-                asin = p.get("asin")
-                if asin:
-                    asin_to_product[asin] = normalize_product(p)
+                a = p.get("asin")
+                if a:
+                    asin_to_product[a] = normalize_product(p)
     finally:
-        await client.close()
+        await keepa.close()
 
+    # ----- 楽天 / Yahoo: 並行取得 -----
+    # 検索キー: Keepa から取った JAN (なければ入力 JAN、最後に商品名)
+    rakuten_results: dict[str, Optional[dict[str, Any]]] = {}
+    yahoo_results: dict[str, Optional[dict[str, Any]]] = {}
+
+    rakuten = RakutenClient(rakuten_id) if rakuten_id else None
+    yahoo = YahooClient(yahoo_id) if yahoo_id else None
+
+    try:
+        async def run_rakuten() -> None:
+            if not rakuten:
+                return
+            for asin, prod in asin_to_product.items():
+                key = prod.get("jan") or prod.get("title")
+                if not key:
+                    continue
+                rakuten_results[asin] = await rakuten.search(key)
+                # クライアント側で sleep 済み (ループ間)
+                await asyncio.sleep(0)
+
+        async def run_yahoo() -> None:
+            if not yahoo:
+                return
+            for asin, prod in asin_to_product.items():
+                jan = prod.get("jan")
+                title = prod.get("title")
+                if jan:
+                    yahoo_results[asin] = await yahoo.search(jan=jan)
+                elif title:
+                    yahoo_results[asin] = await yahoo.search(query=title)
+
+        await asyncio.gather(run_rakuten(), run_yahoo())
+    finally:
+        if rakuten:
+            await rakuten.close()
+        if yahoo:
+            await yahoo.close()
+
+    # ----- 結果アセンブル + スコアリング -----
     items: list[ProductItem] = []
     succeeded = 0
     failed = 0
@@ -248,7 +310,27 @@ async def research(req: ResearchRequest) -> ResearchResponse:
             failed += 1
             continue
 
-        purchase_price = req.default_purchase_price
+        rk = rakuten_results.get(asin)
+        yh = yahoo_results.get(asin)
+
+        rakuten_price = rk.get("price") if rk else None
+        yahoo_price = yh.get("price") if yh else None
+
+        # 仕入れ価格: 明示指定 > Yahoo / 楽天の安い方 > デフォルト値
+        cheapest = None
+        cheapest_source = None
+        candidates = [
+            ("rakuten", rakuten_price),
+            ("yahoo", yahoo_price),
+        ]
+        valid = [(s, p) for s, p in candidates if p is not None]
+        if valid:
+            cheapest_source, cheapest = min(valid, key=lambda x: x[1])
+
+        purchase_price = (
+            cheapest if cheapest is not None else req.default_purchase_price
+        )
+
         score_result = calc_score(
             ScoreInput(
                 amazon_lowest_price=product.get("lowest_new_price"),
@@ -266,11 +348,27 @@ async def research(req: ResearchRequest) -> ResearchResponse:
                 profit=score_result.profit,
                 profit_rate=score_result.profit_rate,
                 score=score_result.grade,
+                rakuten_price=rakuten_price,
+                rakuten_url=rk.get("url") if rk else None,
+                rakuten_shop=rk.get("shop") if rk else None,
+                yahoo_price=yahoo_price,
+                yahoo_url=yh.get("url") if yh else None,
+                yahoo_shop=yh.get("shop") if yh else None,
+                cheapest_source_price=cheapest,
+                cheapest_source=cheapest_source,
                 **product,
             )
         )
         succeeded += 1
 
     return ResearchResponse(
-        items=items, total=len(unique), succeeded=succeeded, failed=failed
+        items=items,
+        total=len(unique),
+        succeeded=succeeded,
+        failed=failed,
+        sources={
+            "keepa": True,
+            "rakuten": bool(rakuten_id),
+            "yahoo": bool(yahoo_id),
+        },
     )

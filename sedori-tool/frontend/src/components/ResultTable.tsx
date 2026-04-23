@@ -8,6 +8,8 @@ type SortKey =
   | "amazon_price"
   | "lowest_new_price"
   | "used_price"
+  | "rakuten_price"
+  | "yahoo_price"
   | "purchase_price"
   | "profit"
   | "profit_rate"
@@ -52,6 +54,10 @@ function sortValue(item: ProductItem, key: SortKey): number | string {
       return item.lowest_new_price ?? Number.MAX_SAFE_INTEGER;
     case "used_price":
       return item.used_price ?? Number.MAX_SAFE_INTEGER;
+    case "rakuten_price":
+      return item.rakuten_price ?? Number.MAX_SAFE_INTEGER;
+    case "yahoo_price":
+      return item.yahoo_price ?? Number.MAX_SAFE_INTEGER;
     case "purchase_price":
       return item.purchase_price ?? Number.MAX_SAFE_INTEGER;
     case "profit":
@@ -370,6 +376,16 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 align="right"
               />
               <Th
+                onClick={() => handleSort("rakuten_price")}
+                label={`楽天${sortArrow("rakuten_price")}`}
+                align="right"
+              />
+              <Th
+                onClick={() => handleSort("yahoo_price")}
+                label={`Yahoo${sortArrow("yahoo_price")}`}
+                align="right"
+              />
+              <Th
                 onClick={() => handleSort("purchase_price")}
                 label={`仕入れ${sortArrow("purchase_price")}`}
                 align="right"
@@ -421,7 +437,7 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
           <tbody>
             {visible.length === 0 && (
               <tr>
-                <td colSpan={18} className="text-center py-10 text-gray-500">
+                <td colSpan={20} className="text-center py-10 text-gray-500">
                   データがありません
                 </td>
               </tr>
@@ -496,6 +512,24 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 </td>
                 <td className="px-3 py-2 text-right text-gray-200">
                   {yen(item.used_price)}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <SourceCell
+                    price={item.rakuten_price}
+                    url={item.rakuten_url}
+                    shop={item.rakuten_shop}
+                    cheapest={item.cheapest_source === "rakuten"}
+                    color="text-red-400"
+                  />
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <SourceCell
+                    price={item.yahoo_price}
+                    url={item.yahoo_url}
+                    shop={item.yahoo_shop}
+                    cheapest={item.cheapest_source === "yahoo"}
+                    color="text-purple-400"
+                  />
                 </td>
                 <td className="px-3 py-2 text-right">
                   <input
@@ -618,6 +652,49 @@ function Th({
     >
       {label}
     </th>
+  );
+}
+
+function SourceCell({
+  price,
+  url,
+  shop,
+  cheapest,
+  color,
+}: {
+  price: number | null;
+  url: string | null;
+  shop: string | null;
+  cheapest: boolean;
+  color: string;
+}) {
+  if (price == null) return <span className="text-gray-600 text-xs">-</span>;
+  return (
+    <div className="text-right">
+      {url ? (
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className={`hover:underline font-bold ${color}`}
+        >
+          ¥{price.toLocaleString()}
+        </a>
+      ) : (
+        <span className={color}>¥{price.toLocaleString()}</span>
+      )}
+      {cheapest && (
+        <div className="text-[10px] text-accent">最安★</div>
+      )}
+      {shop && (
+        <div
+          className="text-[10px] text-gray-500 truncate max-w-[120px]"
+          title={shop}
+        >
+          {shop}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 import type { AppSettings } from "../types";
 
-const KEY = "sedori_tool_settings_v1";
+const KEY = "sedori_tool_settings_v2";
 
 export function loadSettings(): AppSettings {
   try {
@@ -9,6 +9,8 @@ export function loadSettings(): AppSettings {
       const parsed = JSON.parse(raw) as Partial<AppSettings>;
       return {
         apiKey: parsed.apiKey ?? "",
+        rakutenAppId: parsed.rakutenAppId ?? "",
+        yahooClientId: parsed.yahooClientId ?? "",
         defaultPurchasePrice:
           typeof parsed.defaultPurchasePrice === "number"
             ? parsed.defaultPurchasePrice
@@ -18,7 +20,12 @@ export function loadSettings(): AppSettings {
   } catch {
     // noop
   }
-  return { apiKey: "", defaultPurchasePrice: null };
+  return {
+    apiKey: "",
+    rakutenAppId: "",
+    yahooClientId: "",
+    defaultPurchasePrice: null,
+  };
 }
 
 export function saveSettings(s: AppSettings): void {

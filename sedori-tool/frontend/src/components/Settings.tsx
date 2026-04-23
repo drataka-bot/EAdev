@@ -10,26 +10,33 @@ interface Props {
 
 export function Settings({ open, initial, onClose, onSave }: Props) {
   const [apiKey, setApiKey] = useState(initial.apiKey);
+  const [rakutenAppId, setRakutenAppId] = useState(initial.rakutenAppId);
+  const [yahooClientId, setYahooClientId] = useState(initial.yahooClientId);
   const [defaultPurchasePrice, setDefaultPurchasePrice] = useState<string>(
     initial.defaultPurchasePrice != null ? String(initial.defaultPurchasePrice) : ""
   );
-  const [showKey, setShowKey] = useState(false);
+  const [showSecrets, setShowSecrets] = useState(false);
 
   if (!open) return null;
 
   const handleSave = () => {
-    const parsed = defaultPurchasePrice.trim() === "" ? null : Number(defaultPurchasePrice);
+    const parsed =
+      defaultPurchasePrice.trim() === "" ? null : Number(defaultPurchasePrice);
     onSave({
       apiKey: apiKey.trim(),
+      rakutenAppId: rakutenAppId.trim(),
+      yahooClientId: yahooClientId.trim(),
       defaultPurchasePrice:
         parsed != null && !Number.isNaN(parsed) && parsed >= 0 ? parsed : null,
     });
     onClose();
   };
 
+  const inputType = showSecrets ? "text" : "password";
+
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center">
-      <div className="bg-base-800 border border-base-500 rounded-lg w-[480px] p-6 shadow-2xl">
+      <div className="bg-base-800 border border-base-500 rounded-lg w-[560px] p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold text-gray-100">
             <span className="text-accent">▌</span> 設定
@@ -42,28 +49,40 @@ export function Settings({ open, initial, onClose, onSave }: Props) {
           </button>
         </div>
 
+        <div className="flex justify-end mb-3">
+          <button
+            onClick={() => setShowSecrets((v) => !v)}
+            className="px-3 py-1 bg-base-600 hover:bg-base-500 border border-base-400 rounded text-xs text-gray-200"
+          >
+            {showSecrets ? "キーを隠す" : "キーを表示"}
+          </button>
+        </div>
+
         <div className="space-y-4">
-          <div>
-            <label className="block text-sm text-gray-300 mb-1">Keepa API キー</label>
-            <div className="flex gap-2">
-              <input
-                type={showKey ? "text" : "password"}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                className="flex-1 bg-base-900 border border-base-500 focus:border-accent rounded px-3 py-2 text-sm font-mono text-gray-100 outline-none"
-              />
-              <button
-                onClick={() => setShowKey((v) => !v)}
-                className="px-3 py-2 bg-base-600 hover:bg-base-500 border border-base-400 rounded text-sm text-gray-200"
-              >
-                {showKey ? "隠す" : "表示"}
-              </button>
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              localStorage に保存されます。バックエンドの .env が優先されます。
-            </p>
-          </div>
+          <ApiKeyField
+            label="Keepa API キー (Amazon データ)"
+            value={apiKey}
+            onChange={setApiKey}
+            placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            type={inputType}
+            help="Amazon の販売価格・ランキング・出品者数を取得します。"
+          />
+          <ApiKeyField
+            label="楽天 ApplicationId (楽天市場の最安取得)"
+            value={rakutenAppId}
+            onChange={setRakutenAppId}
+            placeholder="20桁の Application ID"
+            type={inputType}
+            help="https://webservice.rakuten.co.jp/ で発行。未設定でもツールは動作しますが楽天価格は取得されません。"
+          />
+          <ApiKeyField
+            label="Yahoo!ショッピング ClientID (Yahoo の最安取得)"
+            value={yahooClientId}
+            onChange={setYahooClientId}
+            placeholder="Yahoo Developer ID"
+            type={inputType}
+            help="https://e.developer.yahoo.co.jp/ で発行。未設定でもツールは動作しますが Yahoo 価格は取得されません。"
+          />
 
           <div>
             <label className="block text-sm text-gray-300 mb-1">
@@ -74,9 +93,14 @@ export function Settings({ open, initial, onClose, onSave }: Props) {
               min={0}
               value={defaultPurchasePrice}
               onChange={(e) => setDefaultPurchasePrice(e.target.value)}
-              placeholder="例: 1000"
+              placeholder="楽天/Yahoo 取得失敗時のフォールバック"
               className="w-full bg-base-900 border border-base-500 focus:border-accent rounded px-3 py-2 text-sm text-gray-100 outline-none"
             />
+          </div>
+
+          <div className="text-xs text-gray-500 border border-base-500 rounded p-3 leading-relaxed">
+            キーは <code className="text-accent">localStorage</code> に保存されます。
+            バックエンドの <code className="text-accent">.env</code> がある場合はそちらが優先されます。
           </div>
         </div>
 
@@ -95,6 +119,36 @@ export function Settings({ open, initial, onClose, onSave }: Props) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ApiKeyField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type,
+  help,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type: string;
+  help?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-sm text-gray-300 mb-1">{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-base-900 border border-base-500 focus:border-accent rounded px-3 py-2 text-sm font-mono text-gray-100 outline-none"
+      />
+      {help && <p className="text-xs text-gray-500 mt-1">{help}</p>}
     </div>
   );
 }

@@ -74,6 +74,12 @@ function App() {
     });
   }, []);
 
+  const [sources, setSources] = useState<{
+    keepa: boolean;
+    rakuten: boolean;
+    yahoo: boolean;
+  } | null>(null);
+
   const handleSubmit = useCallback(
     async (codes: string[]) => {
       if (codes.length === 0) return;
@@ -87,6 +93,8 @@ function App() {
           body: JSON.stringify({
             codes,
             api_key: settings.apiKey || undefined,
+            rakuten_app_id: settings.rakutenAppId || undefined,
+            yahoo_client_id: settings.yahooClientId || undefined,
             default_purchase_price: settings.defaultPurchasePrice,
           }),
         });
@@ -96,6 +104,7 @@ function App() {
         }
         const data = (await resp.json()) as ResearchResponse;
         setItems(data.items);
+        setSources(data.sources);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -103,7 +112,14 @@ function App() {
         setLoading(false);
       }
     },
-    [settings.apiKey, settings.defaultPurchasePrice, startProgress, stopProgress]
+    [
+      settings.apiKey,
+      settings.rakutenAppId,
+      settings.yahooClientId,
+      settings.defaultPurchasePrice,
+      startProgress,
+      stopProgress,
+    ]
   );
 
   const handlePurchasePriceChange = useCallback(
@@ -151,6 +167,15 @@ function App() {
             </span>
           </div>
           <div className="flex items-center gap-3 text-sm">
+            <SourceBadges
+              sources={
+                sources ?? {
+                  keepa: !!settings.apiKey,
+                  rakuten: !!settings.rakutenAppId,
+                  yahoo: !!settings.yahooClientId,
+                }
+              }
+            />
             <div className="text-gray-400">
               件数 <span className="text-accent font-bold">{summary.total}</span> ·
               <span className="ml-2">S</span>
@@ -199,6 +224,35 @@ function App() {
         onClose={() => setSettingsOpen(false)}
         onSave={handleSaveSettings}
       />
+    </div>
+  );
+}
+
+function SourceBadges({
+  sources,
+}: {
+  sources: { keepa: boolean; rakuten: boolean; yahoo: boolean };
+}) {
+  const items = [
+    { label: "Amazon/Keepa", on: sources.keepa, color: "bg-amber-500" },
+    { label: "楽天", on: sources.rakuten, color: "bg-red-500" },
+    { label: "Yahoo", on: sources.yahoo, color: "bg-purple-500" },
+  ];
+  return (
+    <div className="flex items-center gap-1">
+      {items.map((it) => (
+        <span
+          key={it.label}
+          className={`px-2 py-0.5 text-[11px] rounded border ${
+            it.on
+              ? `${it.color} text-black border-transparent`
+              : "bg-base-700 text-gray-500 border-base-500"
+          }`}
+          title={it.on ? "取得有効" : "API キー未設定"}
+        >
+          {it.label}
+        </span>
+      ))}
     </div>
   );
 }
