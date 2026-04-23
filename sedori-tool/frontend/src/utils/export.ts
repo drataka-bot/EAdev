@@ -1,0 +1,69 @@
+import type { ProductItem } from "../types";
+
+const HEADERS: { key: keyof ProductItem | "score"; label: string }[] = [
+  { key: "score", label: "スコア" },
+  { key: "input_code", label: "入力コード" },
+  { key: "asin", label: "ASIN" },
+  { key: "title", label: "商品名" },
+  { key: "brand", label: "ブランド" },
+  { key: "category", label: "カテゴリ" },
+  { key: "amazon_price", label: "Amazon現在価格" },
+  { key: "lowest_new_price", label: "新品最安値" },
+  { key: "used_price", label: "中古最安値" },
+  { key: "purchase_price", label: "仕入れ価格" },
+  { key: "profit", label: "利益額" },
+  { key: "profit_rate", label: "利益率(%)" },
+  { key: "fba_fee", label: "FBA手数料" },
+  { key: "rank_current", label: "ランキング" },
+  { key: "rank_avg30", label: "30日平均ランキング" },
+  { key: "rank_avg90", label: "90日平均ランキング" },
+  { key: "monthly_sales", label: "月間推定販売数" },
+  { key: "new_offer_count", label: "出品者数(新品)" },
+  { key: "used_offer_count", label: "出品者数(中古)" },
+  { key: "amazon_in_stock", label: "Amazon在庫" },
+  { key: "buy_box_is_amazon", label: "BuyBoxAmazon" },
+  { key: "amazon_url", label: "Amazon URL" },
+  { key: "keepa_url", label: "Keepa URL" },
+  { key: "error", label: "エラー" },
+];
+
+function csvEscape(val: unknown): string {
+  if (val == null) return "";
+  const s = String(val);
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function timestamp(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return (
+    d.getFullYear().toString() +
+    p(d.getMonth() + 1) +
+    p(d.getDate()) +
+    "_" +
+    p(d.getHours()) +
+    p(d.getMinutes()) +
+    p(d.getSeconds())
+  );
+}
+
+export function exportCsv(items: ProductItem[]): void {
+  const lines = [HEADERS.map((h) => csvEscape(h.label)).join(",")];
+  for (const item of items) {
+    const row = HEADERS.map((h) => csvEscape((item as any)[h.key]));
+    lines.push(row.join(","));
+  }
+  const csv = "﻿" + lines.join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `sedori_result_${timestamp()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
