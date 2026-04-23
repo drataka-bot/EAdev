@@ -27,6 +27,7 @@ CSV_NEW = 1
 CSV_USED = 2
 CSV_SALES_RANK = 3
 CSV_NEW_FBA = 10
+CSV_NEW_FBM_SHIPPING = 11
 CSV_BUY_BOX = 18
 
 
@@ -160,6 +161,61 @@ def _category_name(product: dict[str, Any]) -> Optional[str]:
     return product.get("productGroup")
 
 
+def _size_category(product: dict[str, Any]) -> Optional[str]:
+    """Keepa の packageLength/Width/Height(mm)・packageWeight(g) から FBA サイズ区分を推定。
+
+    Amazon.co.jp FBA サイズ規定 (概算):
+      小型: 長辺 25cm 以下 & 3辺 35x30x3.3cm 以下 & 重量 250g 以下
+      標準: 長辺 45cm 以下 & 3辺合計 170cm 以下 & 重量 9kg 以下
+      大型: それ以外
+    """
+    def _mm(key: str) -> Optional[int]:
+        v = product.get(key)
+        try:
+            return int(v) if v is not None and int(v) > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    length = _mm("packageLength")
+    width = _mm("packageWidth")
+    height = _mm("packageHeight")
+    weight_g = _mm("packageWeight")
+
+    if not (length and width and height):
+        return None
+
+    dims = sorted([length, width, height], reverse=True)
+    longest_cm = dims[0] / 10.0
+    sum_cm = sum(dims) / 10.0
+
+    if longest_cm <= 25 and (weight_g is None or weight_g <= 1000):
+        return "小型"
+    if longest_cm <= 45 and sum_cm <= 170 and (weight_g is None or weight_g <= 9000):
+        return "標準"
+    return "大型"
+
+
+def _count_offers(product: dict[str, Any]) -> tuple[Optional[int], Optional[int]]:
+    """FBA 出品者数 / 自己発送出品者数 を offers 配列から算出。"""
+    offers = product.get("offers")
+    if not isinstance(offers, list) or not offers:
+        return None, None
+    fba = 0
+    fbm = 0
+    for o in offers:
+        if not isinstance(o, dict):
+            continue
+        # condition: 1=new (NEW), 2-5=used
+        condition = o.get("condition", 1)
+        if condition != 1:
+            continue
+        if o.get("isFBA"):
+            fba += 1
+        else:
+            fbm += 1
+    return fba, fbm
+
+
 def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
     """Keepa のレスポンスを UI 用にフラットな辞書へ変換。"""
     stats = product.get("stats") or {}
@@ -168,6 +224,8 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
     new_price = _price(_stat_at(stats, "current", CSV_NEW))
     used_price = _price(_stat_at(stats, "current", CSV_USED))
     buy_box_price = _price(_stat_at(stats, "current", CSV_BUY_BOX))
+    fba_price = _price(_stat_at(stats, "current", CSV_NEW_FBA))
+    fbm_price = _price(_stat_at(stats, "current", CSV_NEW_FBM_SHIPPING))
 
     # 最安値候補: Amazon or NEW
     candidates = [p for p in [amazon_price, new_price, buy_box_price] if p is not None]
@@ -205,8 +263,22 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
     if used_offer_count is None:
         used_offer_count = stats.get("offerCountUsed")
 
+    fba_offer_count, fbm_offer_count = _count_offers(product)
+
     buy_box_is_amazon = bool(stats.get("buyBoxIsAmazon"))
     amazon_in_stock = amazon_price is not None
+
+    # 30日 / 90日 販売数推定 (salesRankDrops)
+    def _sales(key: str) -> Optional[int]:
+        v = stats.get(key)
+        try:
+            n = int(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+        return n if n is not None and n >= 0 else None
+
+    sales_30d = _sales("salesRankDrops30")
+    sales_90d = _sales("salesRankDrops90")
 
     asin = product.get("asin")
     return {
@@ -214,18 +286,25 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
         "title": product.get("title"),
         "brand": product.get("brand"),
         "category": _category_name(product),
+        "size_category": _size_category(product),
         "amazon_price": amazon_price,
         "new_price": new_price,
         "used_price": used_price,
         "lowest_new_price": lowest_new,
         "buy_box_price": buy_box_price,
+        "fba_price": fba_price,
+        "fbm_price": fbm_price,
         "fba_fee": fba_fee,
         "rank_current": _rank(rank_current),
         "rank_avg30": _rank(rank_avg30),
         "rank_avg90": _rank(rank_avg90),
         "monthly_sales": int(monthly_sold) if monthly_sold else 0,
+        "sales_30d": sales_30d,
+        "sales_90d": sales_90d,
         "new_offer_count": new_offer_count,
         "used_offer_count": used_offer_count,
+        "fba_offer_count": fba_offer_count,
+        "fbm_offer_count": fbm_offer_count,
         "amazon_in_stock": amazon_in_stock,
         "buy_box_is_amazon": buy_box_is_amazon,
         "amazon_url": f"https://www.amazon.co.jp/dp/{asin}" if asin else None,

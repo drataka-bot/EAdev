@@ -7,18 +7,22 @@ type SortKey =
   | "title"
   | "amazon_price"
   | "lowest_new_price"
+  | "used_price"
   | "purchase_price"
   | "profit"
   | "profit_rate"
   | "rank_current"
   | "monthly_sales"
-  | "new_offer_count";
+  | "sales_30d"
+  | "sales_90d"
+  | "new_offer_count"
+  | "fba_offer_count";
 
 type SortDir = "asc" | "desc";
 
 const SCORE_ORDER: Record<string, number> = { S: 0, A: 1, B: 2, C: 3, D: 4, "-": 5 };
-
 const ALL_GRADES: (ScoreGrade | "-")[] = ["S", "A", "B", "C", "D", "-"];
+const ALL_SIZES = ["小型", "標準", "大型"];
 
 interface Props {
   items: ProductItem[];
@@ -46,6 +50,8 @@ function sortValue(item: ProductItem, key: SortKey): number | string {
       return item.amazon_price ?? Number.MAX_SAFE_INTEGER;
     case "lowest_new_price":
       return item.lowest_new_price ?? Number.MAX_SAFE_INTEGER;
+    case "used_price":
+      return item.used_price ?? Number.MAX_SAFE_INTEGER;
     case "purchase_price":
       return item.purchase_price ?? Number.MAX_SAFE_INTEGER;
     case "profit":
@@ -56,8 +62,14 @@ function sortValue(item: ProductItem, key: SortKey): number | string {
       return item.rank_current ?? Number.MAX_SAFE_INTEGER;
     case "monthly_sales":
       return item.monthly_sales;
+    case "sales_30d":
+      return item.sales_30d ?? -1;
+    case "sales_90d":
+      return item.sales_90d ?? -1;
     case "new_offer_count":
       return item.new_offer_count ?? Number.MAX_SAFE_INTEGER;
+    case "fba_offer_count":
+      return item.fba_offer_count ?? Number.MAX_SAFE_INTEGER;
     default:
       return 0;
   }
@@ -67,12 +79,52 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("score");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [gradeFilter, setGradeFilter] = useState<Set<string>>(new Set());
+  const [sizeFilter, setSizeFilter] = useState<Set<string>>(new Set());
   const [keyword, setKeyword] = useState("");
+  const [minProfitRate, setMinProfitRate] = useState<string>("");
+  const [minMonthly, setMinMonthly] = useState<string>("");
+  const [maxNewOffers, setMaxNewOffers] = useState<string>("");
+  const [maxFbaOffers, setMaxFbaOffers] = useState<string>("");
+  const [excludeAmazon, setExcludeAmazon] = useState(false);
+  const [profitableOnly, setProfitableOnly] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  const toNumber = (v: string): number | null => {
+    if (v.trim() === "") return null;
+    const n = Number(v);
+    return Number.isNaN(n) ? null : n;
+  };
 
   const visible = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
+    const minPR = toNumber(minProfitRate);
+    const minMon = toNumber(minMonthly);
+    const maxNew = toNumber(maxNewOffers);
+    const maxFba = toNumber(maxFbaOffers);
+
     let rows = items.filter((item) => {
       if (gradeFilter.size > 0 && !gradeFilter.has(item.score)) return false;
+      if (sizeFilter.size > 0) {
+        const sc = item.size_category ?? "";
+        if (!sizeFilter.has(sc)) return false;
+      }
+      if (excludeAmazon && (item.amazon_in_stock || item.buy_box_is_amazon)) return false;
+      if (profitableOnly && (item.profit == null || item.profit <= 0)) return false;
+      if (minPR != null && (item.profit_rate == null || item.profit_rate < minPR))
+        return false;
+      if (minMon != null && item.monthly_sales < minMon) return false;
+      if (
+        maxNew != null &&
+        item.new_offer_count != null &&
+        item.new_offer_count > maxNew
+      )
+        return false;
+      if (
+        maxFba != null &&
+        item.fba_offer_count != null &&
+        item.fba_offer_count > maxFba
+      )
+        return false;
       if (kw) {
         const hay = [
           item.title,
@@ -94,32 +146,51 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
       if (typeof av === "number" && typeof bv === "number") {
         return sortDir === "asc" ? av - bv : bv - av;
       }
-      const as = String(av);
-      const bs = String(bv);
-      return sortDir === "asc" ? as.localeCompare(bs) : bs.localeCompare(as);
+      return sortDir === "asc"
+        ? String(av).localeCompare(String(bv))
+        : String(bv).localeCompare(String(av));
     });
     return rows;
-  }, [items, gradeFilter, keyword, sortKey, sortDir]);
+  }, [
+    items,
+    gradeFilter,
+    sizeFilter,
+    keyword,
+    minProfitRate,
+    minMonthly,
+    maxNewOffers,
+    maxFbaOffers,
+    excludeAmazon,
+    profitableOnly,
+    sortKey,
+    sortDir,
+  ]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(key);
-      setSortDir(key === "profit" || key === "profit_rate" ? "desc" : "asc");
+      setSortDir(
+        key === "profit" ||
+          key === "profit_rate" ||
+          key === "monthly_sales" ||
+          key === "sales_30d" ||
+          key === "sales_90d"
+          ? "desc"
+          : "asc"
+      );
     }
   };
 
   const sortArrow = (key: SortKey) =>
     sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "";
 
-  const toggleGrade = (g: string) => {
-    setGradeFilter((prev) => {
-      const next = new Set(prev);
-      if (next.has(g)) next.delete(g);
-      else next.add(g);
-      return next;
-    });
+  const toggleInSet = (set: Set<string>, v: string) => {
+    const next = new Set(set);
+    if (next.has(v)) next.delete(v);
+    else next.add(v);
+    return next;
   };
 
   const copyAsin = async (asin: string | null) => {
@@ -131,18 +202,31 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
     }
   };
 
+  const resetFilters = () => {
+    setGradeFilter(new Set());
+    setSizeFilter(new Set());
+    setKeyword("");
+    setMinProfitRate("");
+    setMinMonthly("");
+    setMaxNewOffers("");
+    setMaxFbaOffers("");
+    setExcludeAmazon(false);
+    setProfitableOnly(false);
+  };
+
   return (
     <div className="bg-base-700/60 border border-base-500 rounded-lg p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+      {/* --- フィルタバー --- */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-gray-400">フィルタ:</span>
+          <span className="text-sm text-gray-400">スコア:</span>
           {ALL_GRADES.map((g) => {
             const active = gradeFilter.has(g);
             return (
               <button
                 key={g}
                 type="button"
-                onClick={() => toggleGrade(g)}
+                onClick={() => setGradeFilter((p) => toggleInSet(p, g))}
                 className={`px-2 py-1 rounded text-xs font-bold border transition ${
                   active
                     ? "bg-accent text-black border-accent"
@@ -157,9 +241,23 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
             type="text"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            placeholder="キーワード検索 (商品名/ASIN/ブランド)"
-            className="ml-2 bg-base-900 border border-base-500 focus:border-accent rounded px-3 py-1 text-sm text-gray-100 outline-none w-64"
+            placeholder="キーワード検索"
+            className="ml-2 bg-base-900 border border-base-500 focus:border-accent rounded px-3 py-1 text-sm text-gray-100 outline-none w-56"
           />
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            className="px-2 py-1 bg-base-600 hover:bg-base-500 border border-base-400 rounded text-xs text-gray-200"
+          >
+            {advancedOpen ? "詳細条件 ▲" : "詳細条件 ▼"}
+          </button>
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="px-2 py-1 bg-base-700 hover:bg-base-600 border border-base-500 rounded text-xs text-gray-400"
+          >
+            リセット
+          </button>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-400">
@@ -177,6 +275,77 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
         </div>
       </div>
 
+      {/* --- 詳細条件 (ミリオンサーチ風) --- */}
+      {advancedOpen && (
+        <div className="bg-base-800/80 border border-base-500 rounded p-3 mb-4 grid grid-cols-4 gap-3 text-xs">
+          <NumberField
+            label="最小利益率 (%)"
+            value={minProfitRate}
+            onChange={setMinProfitRate}
+            placeholder="例: 15"
+          />
+          <NumberField
+            label="最小月間販売数"
+            value={minMonthly}
+            onChange={setMinMonthly}
+            placeholder="例: 10"
+          />
+          <NumberField
+            label="最大新品出品者数"
+            value={maxNewOffers}
+            onChange={setMaxNewOffers}
+            placeholder="例: 10"
+          />
+          <NumberField
+            label="最大 FBA 出品者数"
+            value={maxFbaOffers}
+            onChange={setMaxFbaOffers}
+            placeholder="例: 5"
+          />
+          <div>
+            <div className="text-gray-400 mb-1">サイズカテゴリ</div>
+            <div className="flex gap-1 flex-wrap">
+              {ALL_SIZES.map((s) => {
+                const active = sizeFilter.has(s);
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setSizeFilter((p) => toggleInSet(p, s))}
+                    className={`px-2 py-1 rounded border transition ${
+                      active
+                        ? "bg-accent text-black border-accent"
+                        : "bg-base-700 text-gray-300 border-base-500 hover:border-accent"
+                    }`}
+                  >
+                    {s}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-gray-300 mt-5">
+            <input
+              type="checkbox"
+              checked={excludeAmazon}
+              onChange={(e) => setExcludeAmazon(e.target.checked)}
+              className="accent-accent"
+            />
+            Amazon 本体出品を除外
+          </label>
+          <label className="flex items-center gap-2 text-gray-300 mt-5">
+            <input
+              type="checkbox"
+              checked={profitableOnly}
+              onChange={(e) => setProfitableOnly(e.target.checked)}
+              className="accent-accent"
+            />
+            黒字のみ表示
+          </label>
+        </div>
+      )}
+
+      {/* --- テーブル --- */}
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead className="text-xs text-gray-300 bg-base-800/70 sticky top-0">
@@ -184,6 +353,7 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
               <Th onClick={() => handleSort("score")} label={`スコア${sortArrow("score")}`} />
               <Th onClick={() => handleSort("title")} label={`商品名${sortArrow("title")}`} />
               <th className="px-3 py-2 text-left">ASIN</th>
+              <th className="px-3 py-2 text-center">サイズ</th>
               <Th
                 onClick={() => handleSort("amazon_price")}
                 label={`現在価格${sortArrow("amazon_price")}`}
@@ -195,13 +365,18 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 align="right"
               />
               <Th
+                onClick={() => handleSort("used_price")}
+                label={`中古最安${sortArrow("used_price")}`}
+                align="right"
+              />
+              <Th
                 onClick={() => handleSort("purchase_price")}
-                label={`仕入れ価格${sortArrow("purchase_price")}`}
+                label={`仕入れ${sortArrow("purchase_price")}`}
                 align="right"
               />
               <Th
                 onClick={() => handleSort("profit")}
-                label={`利益額${sortArrow("profit")}`}
+                label={`利益${sortArrow("profit")}`}
                 align="right"
               />
               <Th
@@ -211,17 +386,32 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
               />
               <Th
                 onClick={() => handleSort("rank_current")}
-                label={`ランキング${sortArrow("rank_current")}`}
+                label={`ランク${sortArrow("rank_current")}`}
                 align="right"
               />
               <Th
                 onClick={() => handleSort("monthly_sales")}
-                label={`月間販売数${sortArrow("monthly_sales")}`}
+                label={`月販売${sortArrow("monthly_sales")}`}
+                align="right"
+              />
+              <Th
+                onClick={() => handleSort("sales_30d")}
+                label={`30日${sortArrow("sales_30d")}`}
+                align="right"
+              />
+              <Th
+                onClick={() => handleSort("sales_90d")}
+                label={`90日${sortArrow("sales_90d")}`}
                 align="right"
               />
               <Th
                 onClick={() => handleSort("new_offer_count")}
-                label={`出品者${sortArrow("new_offer_count")}`}
+                label={`新品出品${sortArrow("new_offer_count")}`}
+                align="right"
+              />
+              <Th
+                onClick={() => handleSort("fba_offer_count")}
+                label={`FBA${sortArrow("fba_offer_count")}`}
                 align="right"
               />
               <th className="px-3 py-2 text-center">Amazon</th>
@@ -231,7 +421,7 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
           <tbody>
             {visible.length === 0 && (
               <tr>
-                <td colSpan={13} className="text-center py-10 text-gray-500">
+                <td colSpan={18} className="text-center py-10 text-gray-500">
                   データがありません
                 </td>
               </tr>
@@ -244,7 +434,7 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 <td className="px-3 py-2">
                   <ScoreBadge grade={item.score} />
                 </td>
-                <td className="px-3 py-2 max-w-[320px]">
+                <td className="px-3 py-2 max-w-[280px]">
                   {item.title ? (
                     <a
                       href={item.amazon_url ?? "#"}
@@ -281,11 +471,31 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                     )}
                   </div>
                 </td>
+                <td className="px-3 py-2 text-center">
+                  {item.size_category ? (
+                    <span className="text-xs px-2 py-0.5 rounded bg-base-600 text-gray-200">
+                      {item.size_category}
+                    </span>
+                  ) : (
+                    <span className="text-gray-600 text-xs">-</span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-right text-gray-200">
                   {yen(item.amazon_price)}
+                  {item.buy_box_is_amazon && (
+                    <div className="text-[10px] text-amber-400">Amazon直売</div>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-right text-gray-200">
                   {yen(item.lowest_new_price)}
+                  {item.fba_price != null && (
+                    <div className="text-[10px] text-gray-500">
+                      FBA: {yen(item.fba_price)}
+                    </div>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right text-gray-200">
+                  {yen(item.used_price)}
                 </td>
                 <td className="px-3 py-2 text-right">
                   <input
@@ -329,20 +539,31 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 <td className="px-3 py-2 text-right text-gray-200">
                   {num(item.rank_current)}
                   {item.rank_avg90 != null && (
-                    <div className="text-xs text-gray-500">
-                      90日平均: {num(item.rank_avg90)}
+                    <div className="text-[10px] text-gray-500">
+                      90日平: {num(item.rank_avg90)}
                     </div>
                   )}
                 </td>
                 <td className="px-3 py-2 text-right text-gray-200">
                   {num(item.monthly_sales)}
                 </td>
+                <td className="px-3 py-2 text-right text-gray-400">
+                  {num(item.sales_30d)}
+                </td>
+                <td className="px-3 py-2 text-right text-gray-400">
+                  {num(item.sales_90d)}
+                </td>
                 <td className="px-3 py-2 text-right text-gray-200">
-                  {num(item.new_offer_count)} /{" "}
-                  <span className="text-gray-500">{num(item.used_offer_count)}</span>
-                  {item.buy_box_is_amazon && (
-                    <div className="text-xs text-amber-400">Amazon直売</div>
-                  )}
+                  {num(item.new_offer_count)}
+                  <div className="text-[10px] text-gray-500">
+                    中古 {num(item.used_offer_count)}
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-right text-gray-200">
+                  {num(item.fba_offer_count)}
+                  <div className="text-[10px] text-gray-500">
+                    自己 {num(item.fbm_offer_count)}
+                  </div>
                 </td>
                 <td className="px-3 py-2 text-center">
                   {item.amazon_url ? (
@@ -397,5 +618,30 @@ function Th({
     >
       {label}
     </th>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div>
+      <div className="text-gray-400 mb-1">{label}</div>
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-base-900 border border-base-500 focus:border-accent rounded px-2 py-1 text-gray-100 outline-none text-sm"
+      />
+    </div>
   );
 }
