@@ -72,7 +72,9 @@ ASIN / JAN を起点とした **リサーチ → 選別 → 仕入れ先確定**
 | Amazon (Keepa)     | 商品名・価格・ランキング・FBA 手数料・出品者数・Buy Box・月間推定販売数                         |
 | 楽天市場              | JAN (または商品名) で最安値・店舗名・商品 URL を自動取得                                |
 | Yahoo!ショッピング       | `jan_code` で最安値・店舗名・商品 URL を自動取得                                  |
-| 最安仕入れ先判定          | 楽天 / Yahoo の安い方を **仕入れ価格に自動セット** + 赤バッジ表示                          |
+| ビックカメラ            | 楽天店 (`shopCode=biccamera`) → Yahoo店 (`seller_id=biccamera`) → 本店スクレイピングのフォールバック |
+| ヨドバシカメラ           | yodobashi.com 直接スクレイピング (オプトイン)                                    |
+| 最安仕入れ先判定          | 4 ソースの最安を **仕入れ価格に自動セット** + ★最安バッジ表示                              |
 | JAN → ASIN         | Keepa `/query?type=product&term={JAN}&domain=5` で自動変換              |
 | サイズ区分判定            | Keepa の梱包寸法/重量から FBA 区分 (小型 / 標準 / 大型) を推定                        |
 | 多軸価格取得             | Amazon 現在価格・カート価格・FBA 価格・自己発送価格・中古最安値を個別表示                        |
@@ -112,14 +114,32 @@ D: 利益率 < 5% または赤字
 
 ### レート制限対策
 
-| ソース             | バッチ        | リクエスト間 sleep |
-| --------------- | ---------- | ------------ |
-| Keepa /product  | 100 ASIN/req | 1.2 s        |
-| Keepa /query    | 1 JAN/req   | 0.5 s        |
-| 楽天 IchibaItem   | 1 検索/req   | 1.1 s        |
-| Yahoo itemSearch | 1 検索/req   | 0.3 s        |
+| ソース                     | バッチ          | リクエスト間 sleep |
+| ----------------------- | ------------ | ------------ |
+| Keepa /product          | 100 ASIN/req | 1.2 s        |
+| Keepa /query            | 1 JAN/req    | 0.5 s        |
+| 楽天 IchibaItem            | 1 検索/req     | 1.1 s        |
+| Yahoo itemSearch        | 1 検索/req     | 0.3 s        |
+| biccamera.com スクレイプ      | 1 検索/req     | 2.0 s        |
+| yodobashi.com スクレイプ     | 1 検索/req     | 2.0 s        |
 
-楽天と Yahoo は `asyncio.gather` で並行実行され、Keepa の取得待ち時間を有効活用します。
+楽天 / Yahoo / ビック / ヨドバシ は `asyncio.gather` で並行実行され、Keepa の取得待ち時間を有効活用します。
+
+### ビック / ヨドバシ取得ロジック
+
+```
+ビックカメラ:
+  1) 楽天 shopCode=biccamera で検索
+  2) ヒットしなければ Yahoo seller_id=biccamera で検索
+  3) ヒットしなければ biccamera.com 検索ページをスクレイプ (要許可)
+
+ヨドバシカメラ:
+  yodobashi.com を JAN で検索 (要許可)
+  ※ 楽天 / Yahoo に出店していないためスクレイプ一択
+```
+
+スクレイピングは UI の「設定」→ **ビック/ヨドバシ本店スクレイピングを有効化** を ON にした場合のみ動作します。
+ToS や IP BAN リスクがあるため自己責任でお使いください。
 
 ---
 

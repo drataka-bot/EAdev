@@ -27,7 +27,10 @@ class YahooClient:
         await self._client.aclose()
 
     async def search(
-        self, jan: Optional[str] = None, query: Optional[str] = None
+        self,
+        jan: Optional[str] = None,
+        query: Optional[str] = None,
+        seller_id: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         params: dict[str, Any] = {
             "appid": self.client_id,
@@ -41,6 +44,8 @@ class YahooClient:
             params["query"] = query
         else:
             return None
+        if seller_id:
+            params["seller_id"] = seller_id
 
         try:
             resp = await self._client.get(ENDPOINT, params=params)

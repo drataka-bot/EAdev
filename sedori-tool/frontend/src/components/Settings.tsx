@@ -12,6 +12,7 @@ export function Settings({ open, initial, onClose, onSave }: Props) {
   const [apiKey, setApiKey] = useState(initial.apiKey);
   const [rakutenAppId, setRakutenAppId] = useState(initial.rakutenAppId);
   const [yahooClientId, setYahooClientId] = useState(initial.yahooClientId);
+  const [enableScraping, setEnableScraping] = useState(initial.enableScraping);
   const [defaultPurchasePrice, setDefaultPurchasePrice] = useState<string>(
     initial.defaultPurchasePrice != null ? String(initial.defaultPurchasePrice) : ""
   );
@@ -26,6 +27,7 @@ export function Settings({ open, initial, onClose, onSave }: Props) {
       apiKey: apiKey.trim(),
       rakutenAppId: rakutenAppId.trim(),
       yahooClientId: yahooClientId.trim(),
+      enableScraping,
       defaultPurchasePrice:
         parsed != null && !Number.isNaN(parsed) && parsed >= 0 ? parsed : null,
     });
@@ -83,6 +85,28 @@ export function Settings({ open, initial, onClose, onSave }: Props) {
             type={inputType}
             help="https://e.developer.yahoo.co.jp/ で発行。未設定でもツールは動作しますが Yahoo 価格は取得されません。"
           />
+
+          <div className="border border-amber-500/40 bg-amber-500/5 rounded p-3">
+            <label className="flex items-start gap-2 text-sm text-gray-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={enableScraping}
+                onChange={(e) => setEnableScraping(e.target.checked)}
+                className="accent-accent mt-0.5"
+              />
+              <div>
+                <div className="font-bold text-amber-300">
+                  ビック/ヨドバシ本店スクレイピングを有効化 (実験的)
+                </div>
+                <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                  公式 API でヒットしない商品について、<code>biccamera.com</code> /{" "}
+                  <code>yodobashi.com</code> を直接読み取って価格を補完します。
+                  <br />
+                  ⚠️ 利用規約や安定性のリスクがあります。自己責任で有効化してください。
+                </p>
+              </div>
+            </label>
+          </div>
 
           <div>
             <label className="block text-sm text-gray-300 mb-1">

@@ -11,6 +11,7 @@ export function loadSettings(): AppSettings {
         apiKey: parsed.apiKey ?? "",
         rakutenAppId: parsed.rakutenAppId ?? "",
         yahooClientId: parsed.yahooClientId ?? "",
+        enableScraping: !!parsed.enableScraping,
         defaultPurchasePrice:
           typeof parsed.defaultPurchasePrice === "number"
             ? parsed.defaultPurchasePrice
@@ -24,6 +25,7 @@ export function loadSettings(): AppSettings {
     apiKey: "",
     rakutenAppId: "",
     yahooClientId: "",
+    enableScraping: false,
     defaultPurchasePrice: null,
   };
 }

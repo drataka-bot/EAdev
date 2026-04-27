@@ -27,11 +27,16 @@ class RakutenClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def search(self, keyword: str) -> Optional[dict[str, Any]]:
-        """keyword (JAN または商品名) で検索し、最安候補を返す。"""
+    async def search(
+        self, keyword: str, shop_code: Optional[str] = None
+    ) -> Optional[dict[str, Any]]:
+        """keyword (JAN または商品名) で検索し、最安候補を返す。
+
+        shop_code を指定すると特定店舗 (例: 'biccamera') のみが対象になる。
+        """
         if not keyword:
             return None
-        params = {
+        params: dict[str, Any] = {
             "applicationId": self.app_id,
             "keyword": keyword,
             "hits": 5,
@@ -39,6 +44,8 @@ class RakutenClient:
             "availability": 1,
             "formatVersion": 2,
         }
+        if shop_code:
+            params["shopCode"] = shop_code
         try:
             resp = await self._client.get(ENDPOINT, params=params)
         except httpx.HTTPError as exc:

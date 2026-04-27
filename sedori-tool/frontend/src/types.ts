@@ -38,8 +38,15 @@ export interface ProductItem {
   yahoo_price: number | null;
   yahoo_url: string | null;
   yahoo_shop: string | null;
+  bic_price: number | null;
+  bic_url: string | null;
+  bic_shop: string | null;
+  bic_source: "rakuten" | "yahoo" | "biccamera" | null;
+  yodobashi_price: number | null;
+  yodobashi_url: string | null;
+  yodobashi_shop: string | null;
   cheapest_source_price: number | null;
-  cheapest_source: "rakuten" | "yahoo" | null;
+  cheapest_source: "rakuten" | "yahoo" | "bic" | "yodobashi" | null;
   purchase_price: number | null;
   profit: number | null;
   profit_rate: number | null;
@@ -52,13 +59,21 @@ export interface ResearchResponse {
   total: number;
   succeeded: number;
   failed: number;
-  sources: { keepa: boolean; rakuten: boolean; yahoo: boolean };
+  sources: {
+    keepa: boolean;
+    rakuten: boolean;
+    yahoo: boolean;
+    bic: boolean;
+    yodobashi: boolean;
+    scraping: boolean;
+  };
 }
 
 export interface AppSettings {
   apiKey: string;
   rakutenAppId: string;
   yahooClientId: string;
+  enableScraping: boolean;
   defaultPurchasePrice: number | null;
 }
 

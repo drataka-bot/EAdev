@@ -78,6 +78,9 @@ function App() {
     keepa: boolean;
     rakuten: boolean;
     yahoo: boolean;
+    bic: boolean;
+    yodobashi: boolean;
+    scraping: boolean;
   } | null>(null);
 
   const handleSubmit = useCallback(
@@ -95,6 +98,7 @@ function App() {
             api_key: settings.apiKey || undefined,
             rakuten_app_id: settings.rakutenAppId || undefined,
             yahoo_client_id: settings.yahooClientId || undefined,
+            enable_scraping: settings.enableScraping,
             default_purchase_price: settings.defaultPurchasePrice,
           }),
         });
@@ -116,6 +120,7 @@ function App() {
       settings.apiKey,
       settings.rakutenAppId,
       settings.yahooClientId,
+      settings.enableScraping,
       settings.defaultPurchasePrice,
       startProgress,
       stopProgress,
@@ -173,6 +178,9 @@ function App() {
                   keepa: !!settings.apiKey,
                   rakuten: !!settings.rakutenAppId,
                   yahoo: !!settings.yahooClientId,
+                  bic: true,
+                  yodobashi: settings.enableScraping,
+                  scraping: settings.enableScraping,
                 }
               }
             />
@@ -231,12 +239,25 @@ function App() {
 function SourceBadges({
   sources,
 }: {
-  sources: { keepa: boolean; rakuten: boolean; yahoo: boolean };
+  sources: {
+    keepa: boolean;
+    rakuten: boolean;
+    yahoo: boolean;
+    bic: boolean;
+    yodobashi: boolean;
+    scraping: boolean;
+  };
 }) {
   const items = [
     { label: "Amazon/Keepa", on: sources.keepa, color: "bg-amber-500" },
     { label: "楽天", on: sources.rakuten, color: "bg-red-500" },
     { label: "Yahoo", on: sources.yahoo, color: "bg-purple-500" },
+    { label: "ビック", on: sources.bic, color: "bg-orange-500" },
+    {
+      label: `ヨドバシ${sources.scraping ? "" : " (要許可)"}`,
+      on: sources.yodobashi,
+      color: "bg-yellow-500",
+    },
   ];
   return (
     <div className="flex items-center gap-1">

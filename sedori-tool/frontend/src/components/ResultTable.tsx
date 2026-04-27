@@ -10,6 +10,8 @@ type SortKey =
   | "used_price"
   | "rakuten_price"
   | "yahoo_price"
+  | "bic_price"
+  | "yodobashi_price"
   | "purchase_price"
   | "profit"
   | "profit_rate"
@@ -58,6 +60,10 @@ function sortValue(item: ProductItem, key: SortKey): number | string {
       return item.rakuten_price ?? Number.MAX_SAFE_INTEGER;
     case "yahoo_price":
       return item.yahoo_price ?? Number.MAX_SAFE_INTEGER;
+    case "bic_price":
+      return item.bic_price ?? Number.MAX_SAFE_INTEGER;
+    case "yodobashi_price":
+      return item.yodobashi_price ?? Number.MAX_SAFE_INTEGER;
     case "purchase_price":
       return item.purchase_price ?? Number.MAX_SAFE_INTEGER;
     case "profit":
@@ -386,6 +392,16 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 align="right"
               />
               <Th
+                onClick={() => handleSort("bic_price")}
+                label={`ビック${sortArrow("bic_price")}`}
+                align="right"
+              />
+              <Th
+                onClick={() => handleSort("yodobashi_price")}
+                label={`ヨドバシ${sortArrow("yodobashi_price")}`}
+                align="right"
+              />
+              <Th
                 onClick={() => handleSort("purchase_price")}
                 label={`仕入れ${sortArrow("purchase_price")}`}
                 align="right"
@@ -437,7 +453,7 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
           <tbody>
             {visible.length === 0 && (
               <tr>
-                <td colSpan={20} className="text-center py-10 text-gray-500">
+                <td colSpan={22} className="text-center py-10 text-gray-500">
                   データがありません
                 </td>
               </tr>
@@ -529,6 +545,33 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                     shop={item.yahoo_shop}
                     cheapest={item.cheapest_source === "yahoo"}
                     color="text-purple-400"
+                  />
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <SourceCell
+                    price={item.bic_price}
+                    url={item.bic_url}
+                    shop={item.bic_shop}
+                    cheapest={item.cheapest_source === "bic"}
+                    color="text-orange-400"
+                    badge={
+                      item.bic_source === "biccamera"
+                        ? "本店"
+                        : item.bic_source === "rakuten"
+                        ? "楽天店"
+                        : item.bic_source === "yahoo"
+                        ? "Yahoo店"
+                        : null
+                    }
+                  />
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <SourceCell
+                    price={item.yodobashi_price}
+                    url={item.yodobashi_url}
+                    shop={item.yodobashi_shop}
+                    cheapest={item.cheapest_source === "yodobashi"}
+                    color="text-yellow-300"
                   />
                 </td>
                 <td className="px-3 py-2 text-right">
@@ -661,12 +704,14 @@ function SourceCell({
   shop,
   cheapest,
   color,
+  badge,
 }: {
   price: number | null;
   url: string | null;
   shop: string | null;
   cheapest: boolean;
   color: string;
+  badge?: string | null;
 }) {
   if (price == null) return <span className="text-gray-600 text-xs">-</span>;
   return (
@@ -682,6 +727,9 @@ function SourceCell({
         </a>
       ) : (
         <span className={color}>¥{price.toLocaleString()}</span>
+      )}
+      {badge && (
+        <div className="text-[10px] text-gray-400">{badge}</div>
       )}
       {cheapest && (
         <div className="text-[10px] text-accent">最安★</div>

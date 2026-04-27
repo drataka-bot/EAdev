@@ -16,10 +16,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from bic_client import BicCameraClient
 from keepa_client import KeepaClient, KeepaError, normalize_product
 from rakuten_client import RakutenClient
 from scoring import ScoreInput, calc_score
 from yahoo_client import YahooClient
+from yodobashi_client import YodobashiClient
 
 load_dotenv()
 
@@ -30,6 +32,11 @@ KEEPA_API_KEY_ENV = os.getenv("KEEPA_API_KEY", "").strip()
 KEEPA_DOMAIN = int(os.getenv("KEEPA_DOMAIN", "5"))
 RAKUTEN_APP_ID_ENV = os.getenv("RAKUTEN_APP_ID", "").strip()
 YAHOO_CLIENT_ID_ENV = os.getenv("YAHOO_CLIENT_ID", "").strip()
+ENABLE_SCRAPING_ENV = os.getenv("ENABLE_SCRAPING", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 CORS_ORIGINS = [
     o.strip()
     for o in os.getenv("BACKEND_CORS_ORIGINS", "http://localhost:5173").split(",")
@@ -57,6 +64,9 @@ class ResearchRequest(BaseModel):
     api_key: Optional[str] = Field(default=None, description="Keepa API キー")
     rakuten_app_id: Optional[str] = Field(default=None, description="楽天 ApplicationId")
     yahoo_client_id: Optional[str] = Field(default=None, description="Yahoo ClientID")
+    enable_scraping: Optional[bool] = Field(
+        default=None, description="ビック/ヨドバシ本店スクレイピングを許可"
+    )
     default_purchase_price: Optional[int] = None
 
 
@@ -98,7 +108,14 @@ class ProductItem(BaseModel):
     yahoo_url: Optional[str] = None
     yahoo_shop: Optional[str] = None
     cheapest_source_price: Optional[int] = None
-    cheapest_source: Optional[str] = None  # "rakuten" or "yahoo"
+    cheapest_source: Optional[str] = None  # rakuten / yahoo / bic / yodobashi
+    bic_price: Optional[int] = None
+    bic_url: Optional[str] = None
+    bic_shop: Optional[str] = None
+    bic_source: Optional[str] = None  # rakuten / yahoo / biccamera
+    yodobashi_price: Optional[int] = None
+    yodobashi_url: Optional[str] = None
+    yodobashi_shop: Optional[str] = None
     # スコア結果
     purchase_price: Optional[int] = None
     profit: Optional[int] = None
@@ -167,6 +184,7 @@ async def health() -> dict[str, Any]:
         "keepa": bool(KEEPA_API_KEY_ENV),
         "rakuten": bool(RAKUTEN_APP_ID_ENV),
         "yahoo": bool(YAHOO_CLIENT_ID_ENV),
+        "scraping": ENABLE_SCRAPING_ENV,
     }
 
 
@@ -192,6 +210,9 @@ async def research(req: ResearchRequest) -> ResearchResponse:
     keepa_key = _resolve_keepa_key(req.api_key)
     rakuten_id = _resolve(RAKUTEN_APP_ID_ENV, req.rakuten_app_id)
     yahoo_id = _resolve(YAHOO_CLIENT_ID_ENV, req.yahoo_client_id)
+    enable_scraping = (
+        req.enable_scraping if req.enable_scraping is not None else ENABLE_SCRAPING_ENV
+    )
 
     # 入力の正規化 + 重複排除
     seen: set[str] = set()
@@ -240,13 +261,23 @@ async def research(req: ResearchRequest) -> ResearchResponse:
     finally:
         await keepa.close()
 
-    # ----- 楽天 / Yahoo: 並行取得 -----
-    # 検索キー: Keepa から取った JAN (なければ入力 JAN、最後に商品名)
+    # ----- 楽天 / Yahoo / ビック / ヨドバシ: 並行取得 -----
     rakuten_results: dict[str, Optional[dict[str, Any]]] = {}
     yahoo_results: dict[str, Optional[dict[str, Any]]] = {}
+    bic_results: dict[str, Optional[dict[str, Any]]] = {}
+    yodobashi_results: dict[str, Optional[dict[str, Any]]] = {}
 
     rakuten = RakutenClient(rakuten_id) if rakuten_id else None
     yahoo = YahooClient(yahoo_id) if yahoo_id else None
+    # Bic 用に別インスタンスを用意 (汎用検索とビック店舗検索の sleep を分離)
+    rakuten_for_bic = RakutenClient(rakuten_id) if rakuten_id else None
+    yahoo_for_bic = YahooClient(yahoo_id) if yahoo_id else None
+    bic = BicCameraClient(
+        rakuten=rakuten_for_bic,
+        yahoo=yahoo_for_bic,
+        allow_scraping=enable_scraping,
+    )
+    yodobashi = YodobashiClient(allow_scraping=enable_scraping)
 
     try:
         async def run_rakuten() -> None:
@@ -257,7 +288,6 @@ async def research(req: ResearchRequest) -> ResearchResponse:
                 if not key:
                     continue
                 rakuten_results[asin] = await rakuten.search(key)
-                # クライアント側で sleep 済み (ループ間)
                 await asyncio.sleep(0)
 
         async def run_yahoo() -> None:
@@ -271,12 +301,30 @@ async def research(req: ResearchRequest) -> ResearchResponse:
                 elif title:
                     yahoo_results[asin] = await yahoo.search(query=title)
 
-        await asyncio.gather(run_rakuten(), run_yahoo())
+        async def run_bic() -> None:
+            for asin, prod in asin_to_product.items():
+                bic_results[asin] = await bic.search(
+                    jan=prod.get("jan"), title=prod.get("title")
+                )
+
+        async def run_yodobashi() -> None:
+            if not enable_scraping:
+                return
+            for asin, prod in asin_to_product.items():
+                yodobashi_results[asin] = await yodobashi.search(jan=prod.get("jan"))
+
+        await asyncio.gather(run_rakuten(), run_yahoo(), run_bic(), run_yodobashi())
     finally:
         if rakuten:
             await rakuten.close()
         if yahoo:
             await yahoo.close()
+        if rakuten_for_bic:
+            await rakuten_for_bic.close()
+        if yahoo_for_bic:
+            await yahoo_for_bic.close()
+        await bic.close()
+        await yodobashi.close()
 
     # ----- 結果アセンブル + スコアリング -----
     items: list[ProductItem] = []
@@ -312,18 +360,24 @@ async def research(req: ResearchRequest) -> ResearchResponse:
 
         rk = rakuten_results.get(asin)
         yh = yahoo_results.get(asin)
+        bc = bic_results.get(asin)
+        yd = yodobashi_results.get(asin)
 
         rakuten_price = rk.get("price") if rk else None
         yahoo_price = yh.get("price") if yh else None
+        bic_price = bc.get("price") if bc else None
+        yodobashi_price = yd.get("price") if yd else None
 
-        # 仕入れ価格: 明示指定 > Yahoo / 楽天の安い方 > デフォルト値
-        cheapest = None
-        cheapest_source = None
+        # 仕入れ価格: 4 ソースの最安を採用
         candidates = [
             ("rakuten", rakuten_price),
             ("yahoo", yahoo_price),
+            ("bic", bic_price),
+            ("yodobashi", yodobashi_price),
         ]
         valid = [(s, p) for s, p in candidates if p is not None]
+        cheapest = None
+        cheapest_source = None
         if valid:
             cheapest_source, cheapest = min(valid, key=lambda x: x[1])
 
@@ -354,6 +408,13 @@ async def research(req: ResearchRequest) -> ResearchResponse:
                 yahoo_price=yahoo_price,
                 yahoo_url=yh.get("url") if yh else None,
                 yahoo_shop=yh.get("shop") if yh else None,
+                bic_price=bic_price,
+                bic_url=bc.get("url") if bc else None,
+                bic_shop=bc.get("shop") if bc else None,
+                bic_source=bc.get("source") if bc else None,
+                yodobashi_price=yodobashi_price,
+                yodobashi_url=yd.get("url") if yd else None,
+                yodobashi_shop=yd.get("shop") if yd else None,
                 cheapest_source_price=cheapest,
                 cheapest_source=cheapest_source,
                 **product,
@@ -370,5 +431,8 @@ async def research(req: ResearchRequest) -> ResearchResponse:
             "keepa": True,
             "rakuten": bool(rakuten_id),
             "yahoo": bool(yahoo_id),
+            "bic": True,  # 楽天/Yahoo経由なので常に有効化扱い
+            "yodobashi": bool(enable_scraping),
+            "scraping": bool(enable_scraping),
         },
     )
