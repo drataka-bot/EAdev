@@ -145,13 +145,19 @@ class ProductItem(BaseModel):
     buy_box_is_amazon: bool = False
     amazon_url: Optional[str] = None
     keepa_url: Optional[str] = None
-    # 仕入れ候補
+    keepa_graph_url: Optional[str] = None
+    # 仕入れ候補 (top 1: 互換用)
     rakuten_price: Optional[int] = None
     rakuten_url: Optional[str] = None
     rakuten_shop: Optional[str] = None
+    rakuten_condition: Optional[str] = None
     yahoo_price: Optional[int] = None
     yahoo_url: Optional[str] = None
     yahoo_shop: Optional[str] = None
+    yahoo_condition: Optional[str] = None
+    # 複数ショップ候補 (価格昇順 / 各最大 5 件)
+    rakuten_offers: list[dict[str, Any]] = Field(default_factory=list)
+    yahoo_offers: list[dict[str, Any]] = Field(default_factory=list)
     cheapest_source_price: Optional[int] = None
     cheapest_source: Optional[str] = None  # rakuten / yahoo / bic / yodobashi
     bic_price: Optional[int] = None
@@ -335,8 +341,8 @@ async def research(req: ResearchRequest) -> ResearchResponse:
         await keepa.close()
 
     # ----- 楽天 / Yahoo / ビック / ヨドバシ: 並行取得 -----
-    rakuten_results: dict[str, Optional[dict[str, Any]]] = {}
-    yahoo_results: dict[str, Optional[dict[str, Any]]] = {}
+    rakuten_offers_map: dict[str, list[dict[str, Any]]] = {}
+    yahoo_offers_map: dict[str, list[dict[str, Any]]] = {}
     bic_results: dict[str, Optional[dict[str, Any]]] = {}
     yodobashi_results: dict[str, Optional[dict[str, Any]]] = {}
 
@@ -361,7 +367,9 @@ async def research(req: ResearchRequest) -> ResearchResponse:
                 title = prod.get("title")
                 if not jan and not title:
                     continue
-                rakuten_results[asin] = await rakuten.search(jan=jan, title=title)
+                rakuten_offers_map[asin] = await rakuten.search_multi(
+                    jan=jan, title=title, hits=5
+                )
                 await asyncio.sleep(0)
 
         async def run_yahoo() -> None:
@@ -370,7 +378,9 @@ async def research(req: ResearchRequest) -> ResearchResponse:
             for asin, prod in asin_to_product.items():
                 jan = prod.get("jan")
                 title = prod.get("title")
-                yahoo_results[asin] = await yahoo.search(jan=jan, query=title)
+                yahoo_offers_map[asin] = await yahoo.search_multi(
+                    jan=jan, query=title, hits=5
+                )
 
         async def run_bic() -> None:
             for asin, prod in asin_to_product.items():
@@ -429,8 +439,13 @@ async def research(req: ResearchRequest) -> ResearchResponse:
             failed += 1
             continue
 
-        rk = rakuten_results.get(asin)
-        yh = yahoo_results.get(asin)
+        rakuten_offers = rakuten_offers_map.get(asin) or []
+        yahoo_offers = yahoo_offers_map.get(asin) or []
+        # 仕入れ用の単一値は新品のみから最安を採用 (中古は混ぜない)
+        rk_new = next((o for o in rakuten_offers if o.get("condition") == "new"), None)
+        yh_new = next((o for o in yahoo_offers if o.get("condition") == "new"), None)
+        rk = rk_new or (rakuten_offers[0] if rakuten_offers else None)
+        yh = yh_new or (yahoo_offers[0] if yahoo_offers else None)
         bc = bic_results.get(asin)
         yd = yodobashi_results.get(asin)
 
@@ -476,9 +491,13 @@ async def research(req: ResearchRequest) -> ResearchResponse:
                 rakuten_price=rakuten_price,
                 rakuten_url=rk.get("url") if rk else None,
                 rakuten_shop=rk.get("shop") if rk else None,
+                rakuten_condition=rk.get("condition") if rk else None,
+                rakuten_offers=rakuten_offers,
                 yahoo_price=yahoo_price,
                 yahoo_url=yh.get("url") if yh else None,
                 yahoo_shop=yh.get("shop") if yh else None,
+                yahoo_condition=yh.get("condition") if yh else None,
+                yahoo_offers=yahoo_offers,
                 bic_price=bic_price,
                 bic_url=bc.get("url") if bc else None,
                 bic_shop=bc.get("shop") if bc else None,

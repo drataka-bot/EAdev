@@ -2,6 +2,15 @@ export type ScoreGrade = "S" | "A" | "B" | "C" | "D" | "-";
 
 export type SizeCategory = "小型" | "標準" | "大型";
 
+export interface OfferItem {
+  price: number;
+  url: string | null;
+  shop: string | null;
+  title: string | null;
+  condition: "new" | "used" | string | null;
+  matched_by?: "jan" | "title" | string;
+}
+
 export interface ProductItem {
   input_code: string;
   asin: string | null;
@@ -33,12 +42,17 @@ export interface ProductItem {
   buy_box_is_amazon: boolean;
   amazon_url: string | null;
   keepa_url: string | null;
+  keepa_graph_url: string | null;
   rakuten_price: number | null;
   rakuten_url: string | null;
   rakuten_shop: string | null;
+  rakuten_condition: string | null;
+  rakuten_offers: OfferItem[];
   yahoo_price: number | null;
   yahoo_url: string | null;
   yahoo_shop: string | null;
+  yahoo_condition: string | null;
+  yahoo_offers: OfferItem[];
   bic_price: number | null;
   bic_url: string | null;
   bic_shop: string | null;

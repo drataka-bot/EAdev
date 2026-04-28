@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { ProductItem, ScoreGrade } from "../types";
+import type { OfferItem, ProductItem, ScoreGrade } from "../types";
 import { ScoreBadge } from "./ScoreBadge";
 
 type SortKey =
@@ -534,21 +534,31 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                   {yen(item.used_price)}
                 </td>
                 <td className="px-3 py-2 text-right">
-                  <SourceCell
-                    price={item.rakuten_price}
-                    url={item.rakuten_url}
-                    shop={item.rakuten_shop}
+                  <OffersCell
+                    offers={item.rakuten_offers}
                     cheapest={item.cheapest_source === "rakuten"}
                     color="text-red-400"
+                    onSelect={(price) =>
+                      onPurchasePriceChange(
+                        item.asin ?? item.input_code,
+                        item.input_code,
+                        price
+                      )
+                    }
                   />
                 </td>
                 <td className="px-3 py-2 text-right">
-                  <SourceCell
-                    price={item.yahoo_price}
-                    url={item.yahoo_url}
-                    shop={item.yahoo_shop}
+                  <OffersCell
+                    offers={item.yahoo_offers}
                     cheapest={item.cheapest_source === "yahoo"}
                     color="text-purple-400"
+                    onSelect={(price) =>
+                      onPurchasePriceChange(
+                        item.asin ?? item.input_code,
+                        item.input_code,
+                        price
+                      )
+                    }
                   />
                 </td>
                 <td className="px-3 py-2 text-right">
@@ -661,7 +671,12 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                   )}
                 </td>
                 <td className="px-3 py-2 text-center">
-                  {item.keepa_url ? (
+                  {item.keepa_graph_url ? (
+                    <KeepaGraphCell
+                      graphUrl={item.keepa_graph_url}
+                      keepaUrl={item.keepa_url}
+                    />
+                  ) : item.keepa_url ? (
                     <a
                       href={item.keepa_url}
                       target="_blank"
@@ -744,6 +759,174 @@ function SourceCell({
           title={shop}
         >
           {shop}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OffersCell({
+  offers,
+  cheapest,
+  color,
+  onSelect,
+}: {
+  offers: OfferItem[];
+  cheapest: boolean;
+  color: string;
+  onSelect: (price: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!offers || offers.length === 0) {
+    return <span className="text-gray-600 text-xs">-</span>;
+  }
+  const top = offers[0];
+  const others = offers.slice(1);
+  return (
+    <div className="text-right">
+      <div className="flex items-center justify-end gap-1">
+        {top.url ? (
+          <a
+            href={top.url}
+            target="_blank"
+            rel="noreferrer"
+            className={`hover:underline font-bold ${color}`}
+          >
+            ¥{top.price.toLocaleString()}
+          </a>
+        ) : (
+          <span className={color}>¥{top.price.toLocaleString()}</span>
+        )}
+        <ConditionBadge condition={top.condition} />
+      </div>
+      {cheapest && <div className="text-[10px] text-accent">最安★</div>}
+      {top.shop && (
+        <div
+          className="text-[10px] text-gray-500 truncate max-w-[140px]"
+          title={top.shop}
+        >
+          {top.shop}
+        </div>
+      )}
+      {others.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="text-[10px] text-gray-400 hover:text-accent mt-0.5"
+        >
+          {open ? "▲ 閉じる" : `▼ 他 ${others.length} 店`}
+        </button>
+      )}
+      {open && (
+        <div className="mt-1 border border-base-500 rounded bg-base-900/95 p-1 space-y-1 text-left">
+          {others.map((o, i) => (
+            <div
+              key={`${o.shop}-${i}`}
+              className="flex items-center gap-1 text-[11px]"
+            >
+              <button
+                type="button"
+                onClick={() => onSelect(o.price)}
+                className="px-1.5 py-0.5 bg-base-700 hover:bg-accent hover:text-black border border-base-500 rounded text-[10px]"
+                title="この価格を仕入れ価格にセット"
+              >
+                選択
+              </button>
+              {o.url ? (
+                <a
+                  href={o.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`hover:underline font-bold ${color}`}
+                >
+                  ¥{o.price.toLocaleString()}
+                </a>
+              ) : (
+                <span className={color}>¥{o.price.toLocaleString()}</span>
+              )}
+              <ConditionBadge condition={o.condition} />
+              {o.shop && (
+                <span
+                  className="text-gray-500 truncate max-w-[120px]"
+                  title={o.shop}
+                >
+                  {o.shop}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConditionBadge({ condition }: { condition: string | null }) {
+  if (!condition) return null;
+  const isUsed = condition === "used";
+  return (
+    <span
+      className={`text-[9px] px-1 rounded ${
+        isUsed
+          ? "bg-amber-500/30 text-amber-200"
+          : "bg-emerald-500/30 text-emerald-200"
+      }`}
+    >
+      {isUsed ? "中古" : "新品"}
+    </span>
+  );
+}
+
+function KeepaGraphCell({
+  graphUrl,
+  keepaUrl,
+}: {
+  graphUrl: string;
+  keepaUrl: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="block"
+        title="クリックで価格履歴グラフを表示"
+      >
+        <img
+          src={graphUrl}
+          alt="Keepa price graph"
+          loading="lazy"
+          className="w-24 h-auto border border-base-500 rounded hover:border-accent"
+        />
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6"
+             onClick={() => setOpen(false)}>
+          <div
+            className="bg-base-800 border border-base-500 rounded-lg p-4 max-w-[800px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img src={graphUrl} alt="Keepa price graph" className="w-full" />
+            <div className="text-right mt-3">
+              {keepaUrl && (
+                <a
+                  href={keepaUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent hover:underline text-sm mr-3"
+                >
+                  Keepa で開く ↗
+                </a>
+              )}
+              <button
+                onClick={() => setOpen(false)}
+                className="px-3 py-1 bg-base-600 hover:bg-base-500 rounded text-sm"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

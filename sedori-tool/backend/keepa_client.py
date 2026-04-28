@@ -384,6 +384,11 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
             break
 
     asin = product.get("asin")
+    keepa_graph_url = (
+        f"https://graph.keepa.com/pricehistory.png?asin={asin}&domain=5&width=600&height=200"
+        if asin
+        else None
+    )
     return {
         "asin": asin,
         "jan": jan,
@@ -414,4 +419,5 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
         "buy_box_is_amazon": buy_box_is_amazon,
         "amazon_url": f"https://www.amazon.co.jp/dp/{asin}" if asin else None,
         "keepa_url": f"https://keepa.com/#!product/5-{asin}" if asin else None,
+        "keepa_graph_url": keepa_graph_url,
     }

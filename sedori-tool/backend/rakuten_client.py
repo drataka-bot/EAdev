@@ -35,11 +35,25 @@ class RakutenClient:
         title: Optional[str] = None,
         shop_code: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
-        """商品を検索し、最安候補を返す。
+        """単一商品 (top 1) を返す互換 API。"""
+        offers = await self.search_multi(
+            keyword=keyword, jan=jan, title=title, shop_code=shop_code, hits=1
+        )
+        return offers[0] if offers else None
 
-        優先順位は jan > title > keyword (後方互換)。
-        JAN で 0 件なら title でフォールバック検索する。
-        shop_code を指定すると特定店舗 (例: 'biccamera') のみが対象。
+    async def search_multi(
+        self,
+        keyword: Optional[str] = None,
+        *,
+        jan: Optional[str] = None,
+        title: Optional[str] = None,
+        shop_code: Optional[str] = None,
+        hits: int = 5,
+    ) -> list[dict[str, Any]]:
+        """価格昇順で最大 hits 件のショップ候補を返す。
+
+        優先順位は jan > title > keyword。JAN で 0 件なら title で
+        フォールバック検索する。
         """
         candidates: list[tuple[str, str]] = []
         if jan:
@@ -49,22 +63,23 @@ class RakutenClient:
         if not candidates and keyword:
             candidates.append(("keyword", keyword))
         if not candidates:
-            return None
+            return []
 
         for label, term in candidates:
-            result = await self._search_once(term, shop_code=shop_code)
-            if result and result.get("price"):
-                result["matched_by"] = label
-                return result
-        return None
+            results = await self._search_once(term, shop_code=shop_code, hits=hits)
+            if results:
+                for r in results:
+                    r["matched_by"] = label
+                return results
+        return []
 
     async def _search_once(
-        self, keyword: str, shop_code: Optional[str]
-    ) -> Optional[dict[str, Any]]:
+        self, keyword: str, shop_code: Optional[str], hits: int = 5
+    ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {
             "applicationId": self.app_id,
             "keyword": keyword,
-            "hits": 5,
+            "hits": max(1, min(30, hits)),
             "sort": "+itemPrice",
             "availability": 1,
             "formatVersion": 2,
@@ -75,7 +90,7 @@ class RakutenClient:
             resp = await self._client.get(ENDPOINT, params=params)
         except httpx.HTTPError as exc:
             log.warning("Rakuten search failed for %s: %s", keyword, exc)
-            return None
+            return []
         if resp.status_code != 200:
             body_short = resp.text[:300]
             if "applicationId" in body_short:
@@ -94,24 +109,34 @@ class RakutenClient:
                     keyword,
                     body_short,
                 )
-            return None
+            return []
         data = resp.json()
         items = data.get("Items") or []
-        if not items:
-            return None
-        first = items[0]
-        if not isinstance(first, dict):
-            return None
-        try:
-            price = int(first.get("itemPrice") or 0) or None
-        except (TypeError, ValueError):
-            price = None
-        return {
-            "price": price,
-            "url": first.get("itemUrl"),
-            "shop": first.get("shopName"),
-            "title": first.get("itemName"),
-        }
+        out: list[dict[str, Any]] = []
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                price = int(raw.get("itemPrice") or 0) or None
+            except (TypeError, ValueError):
+                price = None
+            if price is None:
+                continue
+            shop = raw.get("shopName") or ""
+            item_title = raw.get("itemName") or ""
+            # 楽天 API には new/used フィールドが無いので、ショップ名・タイトルから推定
+            blob = f"{shop} {item_title}"
+            condition = "used" if any(k in blob for k in ("中古", "USED", "Used")) else "new"
+            out.append(
+                {
+                    "price": price,
+                    "url": raw.get("itemUrl"),
+                    "shop": shop or None,
+                    "title": item_title or None,
+                    "condition": condition,
+                }
+            )
+        return out
 
     async def search_many(self, keywords: list[str]) -> dict[str, Optional[dict[str, Any]]]:
         out: dict[str, Optional[dict[str, Any]]] = {}

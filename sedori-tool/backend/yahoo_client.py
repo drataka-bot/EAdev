@@ -47,32 +47,52 @@ class YahooClient:
         query: Optional[str] = None,
         seller_id: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
-        """JAN を最優先、ヒット 0 件なら query でフォールバック。"""
+        """単一商品 (top 1) を返す互換 API。"""
+        offers = await self.search_multi(
+            jan=jan, query=query, seller_id=seller_id, hits=1
+        )
+        return offers[0] if offers else None
+
+    async def search_multi(
+        self,
+        jan: Optional[str] = None,
+        query: Optional[str] = None,
+        seller_id: Optional[str] = None,
+        hits: int = 5,
+    ) -> list[dict[str, Any]]:
+        """JAN を最優先、ヒット 0 件なら query でフォールバック。新品 + 中古を含む。"""
         if self._in_cooldown():
-            return None
+            return []
         if jan:
-            r = await self._search_once(seller_id=seller_id, jan_code=jan)
-            if r and r.get("price"):
-                r["matched_by"] = "jan"
-                return r
+            results = await self._search_once(
+                seller_id=seller_id, jan_code=jan, hits=hits
+            )
+            if results:
+                for r in results:
+                    r["matched_by"] = "jan"
+                return results
             if self._in_cooldown():
-                return None
+                return []
         if query:
-            r = await self._search_once(seller_id=seller_id, query=query)
-            if r and r.get("price"):
-                r["matched_by"] = "title"
-                return r
-        return None
+            results = await self._search_once(
+                seller_id=seller_id, query=query, hits=hits
+            )
+            if results:
+                for r in results:
+                    r["matched_by"] = "title"
+                return results
+        return []
 
     async def _search_once(
         self,
         seller_id: Optional[str] = None,
         jan_code: Optional[str] = None,
         query: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+        hits: int = 5,
+    ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {
             "appid": self.client_id,
-            "results": 5,
+            "results": max(1, min(50, hits)),
             "sort": "+price",
             "in_stock": "true",
         }
@@ -81,7 +101,7 @@ class YahooClient:
         elif query:
             params["query"] = query
         else:
-            return None
+            return []
         if seller_id:
             params["seller_id"] = seller_id
 
@@ -93,8 +113,7 @@ class YahooClient:
                 jan_code or query,
                 exc,
             )
-            return None
-        # ループ間の最低スリープ
+            return []
         await asyncio.sleep(SLEEP_SEC)
 
         if resp.status_code == 429:
@@ -104,7 +123,7 @@ class YahooClient:
                 jan_code or query,
                 resp.text[:200],
             )
-            return None
+            return []
 
         if resp.status_code != 200:
             log.warning(
@@ -113,24 +132,36 @@ class YahooClient:
                 jan_code or query,
                 resp.text[:300],
             )
-            return None
+            return []
 
         data = resp.json()
-        hits = data.get("hits") or []
-        if not hits:
-            return None
-        first = hits[0]
-        try:
-            price = int(first.get("price") or 0) or None
-        except (TypeError, ValueError):
-            price = None
-        seller = first.get("seller") or {}
-        return {
-            "price": price,
-            "url": first.get("url"),
-            "shop": seller.get("name") if isinstance(seller, dict) else None,
-            "title": first.get("name"),
-        }
+        hits_arr = data.get("hits") or []
+        out: list[dict[str, Any]] = []
+        for raw in hits_arr:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                price = int(raw.get("price") or 0) or None
+            except (TypeError, ValueError):
+                price = None
+            if price is None:
+                continue
+            seller = raw.get("seller") or {}
+            # Yahoo Shopping API は condition フィールドを持つ ('new' / 'used')
+            condition = raw.get("condition")
+            if condition not in ("new", "used"):
+                # 未指定時はデフォルトで新品扱い
+                condition = "new"
+            out.append(
+                {
+                    "price": price,
+                    "url": raw.get("url"),
+                    "shop": seller.get("name") if isinstance(seller, dict) else None,
+                    "title": raw.get("name"),
+                    "condition": condition,
+                }
+            )
+        return out
 
     async def search_many_by_jan(
         self, jans: list[str]
