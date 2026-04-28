@@ -5,7 +5,7 @@ import { ScoreBadge } from "./ScoreBadge";
 type SortKey =
   | "score"
   | "title"
-  | "amazon_price"
+  | "current_price"
   | "lowest_new_price"
   | "used_price"
   | "rakuten_price"
@@ -50,8 +50,8 @@ function sortValue(item: ProductItem, key: SortKey): number | string {
       return SCORE_ORDER[item.score] ?? 99;
     case "title":
       return item.title ?? "";
-    case "amazon_price":
-      return item.amazon_price ?? Number.MAX_SAFE_INTEGER;
+    case "current_price":
+      return item.current_price ?? Number.MAX_SAFE_INTEGER;
     case "lowest_new_price":
       return item.lowest_new_price ?? Number.MAX_SAFE_INTEGER;
     case "used_price":
@@ -367,8 +367,8 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
               <th className="px-3 py-2 text-left">ASIN</th>
               <th className="px-3 py-2 text-center">サイズ</th>
               <Th
-                onClick={() => handleSort("amazon_price")}
-                label={`現在価格${sortArrow("amazon_price")}`}
+                onClick={() => handleSort("current_price")}
+                label={`現在価格${sortArrow("current_price")}`}
                 align="right"
               />
               <Th
@@ -513,10 +513,14 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                   )}
                 </td>
                 <td className="px-3 py-2 text-right text-gray-200">
-                  {yen(item.amazon_price)}
-                  {item.buy_box_is_amazon && (
+                  {yen(item.current_price)}
+                  {item.buy_box_is_amazon ? (
                     <div className="text-[10px] text-amber-400">Amazon直売</div>
-                  )}
+                  ) : item.amazon_price != null ? (
+                    <div className="text-[10px] text-gray-500">
+                      Amazon: {yen(item.amazon_price)}
+                    </div>
+                  ) : null}
                 </td>
                 <td className="px-3 py-2 text-right text-gray-200">
                   {yen(item.lowest_new_price)}

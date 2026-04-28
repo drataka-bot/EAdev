@@ -11,6 +11,7 @@ export interface ProductItem {
   category: string | null;
   size_category: SizeCategory | string | null;
   amazon_price: number | null;
+  current_price: number | null;
   new_price: number | null;
   used_price: number | null;
   lowest_new_price: number | null;

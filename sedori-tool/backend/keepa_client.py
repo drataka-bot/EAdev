@@ -304,6 +304,13 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
     fba_price = _price(_stat_at(stats, "current", CSV_NEW_FBA))
     fbm_price = _price(_stat_at(stats, "current", CSV_NEW_FBM_SHIPPING))
 
+    # Amazon ページで実際に表示される価格 (購入時に決まる価格):
+    # Buy Box > Amazon 直売 > 新品最安 の優先順位で決定。
+    current_price_candidates = [
+        p for p in [buy_box_price, amazon_price, new_price] if p is not None
+    ]
+    current_price = current_price_candidates[0] if current_price_candidates else None
+
     # 最安値候補: Amazon or NEW
     candidates = [p for p in [amazon_price, new_price, buy_box_price] if p is not None]
     lowest_new = min(candidates) if candidates else None
@@ -376,6 +383,7 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
         "category": _category_name(product),
         "size_category": _size_category(product),
         "amazon_price": amazon_price,
+        "current_price": current_price,
         "new_price": new_price,
         "used_price": used_price,
         "lowest_new_price": lowest_new,

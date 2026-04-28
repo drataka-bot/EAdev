@@ -123,6 +123,7 @@ class ProductItem(BaseModel):
     category: Optional[str] = None
     size_category: Optional[str] = None
     amazon_price: Optional[int] = None
+    current_price: Optional[int] = None
     new_price: Optional[int] = None
     used_price: Optional[int] = None
     lowest_new_price: Optional[int] = None
