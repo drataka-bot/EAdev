@@ -210,7 +210,11 @@ class KeepaClient:
 # ----------------------------------------------------------------------
 
 def _price(val: Any) -> Optional[int]:
-    """Keepa の価格値は yen*100 で格納されるため 100 で割る。-1 は無効値。"""
+    """Keepa の価格値を円に正規化する。
+
+    Amazon.co.jp (domain=5) は **円単位の整数** で返るため、そのまま返す。
+    -1 は無効値。
+    """
     if val is None:
         return None
     try:
@@ -219,7 +223,7 @@ def _price(val: Any) -> Optional[int]:
         return None
     if n < 0:
         return None
-    return n // 100
+    return n
 
 
 def _stat_at(stats: dict[str, Any], key: str, idx: int) -> Any:
