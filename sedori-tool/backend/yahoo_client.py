@@ -53,11 +53,11 @@ class YahooClient:
             log.warning("Yahoo search failed for %s: %s", jan or query, exc)
             return None
         if resp.status_code != 200:
-            log.info(
+            log.warning(
                 "Yahoo %s for %s: %s",
                 resp.status_code,
                 jan or query,
-                resp.text[:200],
+                resp.text[:300],
             )
             return None
         data = resp.json()

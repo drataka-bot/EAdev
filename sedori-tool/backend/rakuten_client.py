@@ -52,8 +52,11 @@ class RakutenClient:
             log.warning("Rakuten search failed for %s: %s", keyword, exc)
             return None
         if resp.status_code != 200:
-            log.info(
-                "Rakuten %s for %s: %s", resp.status_code, keyword, resp.text[:200]
+            log.warning(
+                "Rakuten %s for %s: %s",
+                resp.status_code,
+                keyword,
+                resp.text[:300],
             )
             return None
         data = resp.json()

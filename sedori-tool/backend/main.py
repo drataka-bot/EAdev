@@ -160,7 +160,17 @@ def _classify(code: str) -> str:
 
 
 def _resolve(env_val: str, supplied: Optional[str]) -> str:
-    return (env_val or (supplied or "")).strip()
+    """API キーを解決。優先順位は UI 入力 > .env。
+
+    `.env.example` のプレースホルダ値 (your_*) は未設定扱い。
+    """
+    def _clean(v: Optional[str]) -> str:
+        s = (v or "").strip()
+        if not s or s.startswith("your_"):
+            return ""
+        return s
+
+    return _clean(supplied) or _clean(env_val)
 
 
 def _resolve_keepa_key(supplied: Optional[str]) -> str:
@@ -181,9 +191,9 @@ def _resolve_keepa_key(supplied: Optional[str]) -> str:
 async def health() -> dict[str, Any]:
     return {
         "status": "ok",
-        "keepa": bool(KEEPA_API_KEY_ENV),
-        "rakuten": bool(RAKUTEN_APP_ID_ENV),
-        "yahoo": bool(YAHOO_CLIENT_ID_ENV),
+        "keepa": bool(_resolve(KEEPA_API_KEY_ENV, None)),
+        "rakuten": bool(_resolve(RAKUTEN_APP_ID_ENV, None)),
+        "yahoo": bool(_resolve(YAHOO_CLIENT_ID_ENV, None)),
         "scraping": ENABLE_SCRAPING_ENV,
     }
 
@@ -212,6 +222,14 @@ async def research(req: ResearchRequest) -> ResearchResponse:
     yahoo_id = _resolve(YAHOO_CLIENT_ID_ENV, req.yahoo_client_id)
     enable_scraping = (
         req.enable_scraping if req.enable_scraping is not None else ENABLE_SCRAPING_ENV
+    )
+    log.info(
+        "research start: codes=%d keepa=%s rakuten=%s yahoo=%s scraping=%s",
+        len(req.codes),
+        "set" if keepa_key else "MISSING",
+        "set" if rakuten_id else "missing",
+        "set" if yahoo_id else "missing",
+        enable_scraping,
     )
 
     # 入力の正規化 + 重複排除
