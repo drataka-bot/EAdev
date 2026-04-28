@@ -67,6 +67,8 @@ export interface ResearchResponse {
     yodobashi: boolean;
     scraping: boolean;
   };
+  keepa_tokens_left?: number | null;
+  keepa_refill_in_ms?: number | null;
 }
 
 export interface AppSettings {

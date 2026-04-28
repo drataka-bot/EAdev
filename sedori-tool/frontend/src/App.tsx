@@ -82,6 +82,8 @@ function App() {
     yodobashi: boolean;
     scraping: boolean;
   } | null>(null);
+  const [keepaTokens, setKeepaTokens] = useState<number | null>(null);
+  const [keepaRefillMs, setKeepaRefillMs] = useState<number | null>(null);
 
   const handleSubmit = useCallback(
     async (codes: string[]) => {
@@ -109,6 +111,8 @@ function App() {
         const data = (await resp.json()) as ResearchResponse;
         setItems(data.items);
         setSources(data.sources);
+        setKeepaTokens(data.keepa_tokens_left ?? null);
+        setKeepaRefillMs(data.keepa_refill_in_ms ?? null);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -184,6 +188,7 @@ function App() {
                 }
               }
             />
+            <KeepaTokenBadge tokens={keepaTokens} refillMs={keepaRefillMs} />
             <div className="text-gray-400">
               件数 <span className="text-accent font-bold">{summary.total}</span> ·
               <span className="ml-2">S</span>
@@ -233,6 +238,35 @@ function App() {
         onSave={handleSaveSettings}
       />
     </div>
+  );
+}
+
+function KeepaTokenBadge({
+  tokens,
+  refillMs,
+}: {
+  tokens: number | null;
+  refillMs: number | null;
+}) {
+  if (tokens == null) return null;
+  const isLow = tokens < 50;
+  const refillSec = refillMs != null ? Math.round(refillMs / 1000) : null;
+  return (
+    <span
+      className={`px-2 py-0.5 text-[11px] rounded border ${
+        isLow
+          ? "bg-red-500/20 text-red-300 border-red-500/40"
+          : "bg-base-700 text-gray-300 border-base-500"
+      }`}
+      title={
+        refillSec != null && isLow
+          ? `あと ${refillSec} 秒で次の補充`
+          : "Keepa トークン残量"
+      }
+    >
+      🪙 {tokens.toLocaleString()}
+      {isLow && refillSec != null ? ` (補充 ${refillSec}s)` : ""}
+    </span>
   );
 }
 

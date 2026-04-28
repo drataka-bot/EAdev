@@ -30,6 +30,11 @@ log = logging.getLogger("sedori")
 
 KEEPA_API_KEY_ENV = os.getenv("KEEPA_API_KEY", "").strip()
 KEEPA_DOMAIN = int(os.getenv("KEEPA_DOMAIN", "5"))
+# トークン節約モード: offers=0 (デフォルト) で 1 ASIN あたり 1 トークンに抑える。
+# offers=20 で詳細出品データ (FBA 出品者数の内訳など) を取得 (6 トークン/ASIN)。
+KEEPA_OFFERS = int(os.getenv("KEEPA_OFFERS", "0"))
+KEEPA_BATCH_SIZE = int(os.getenv("KEEPA_BATCH_SIZE", "100"))
+KEEPA_BATCH_SLEEP_SEC = float(os.getenv("KEEPA_BATCH_SLEEP_SEC", "1.2"))
 RAKUTEN_APP_ID_ENV = os.getenv("RAKUTEN_APP_ID", "").strip()
 YAHOO_CLIENT_ID_ENV = os.getenv("YAHOO_CLIENT_ID", "").strip()
 ENABLE_SCRAPING_ENV = os.getenv("ENABLE_SCRAPING", "").strip().lower() in (
@@ -130,6 +135,8 @@ class ResearchResponse(BaseModel):
     succeeded: int
     failed: int
     sources: dict[str, bool]
+    keepa_tokens_left: Optional[int] = None
+    keepa_refill_in_ms: Optional[int] = None
 
 
 class ScoreRequest(BaseModel):
@@ -195,6 +202,8 @@ async def health() -> dict[str, Any]:
         "rakuten": bool(_resolve(RAKUTEN_APP_ID_ENV, None)),
         "yahoo": bool(_resolve(YAHOO_CLIENT_ID_ENV, None)),
         "scraping": ENABLE_SCRAPING_ENV,
+        "keepa_offers": KEEPA_OFFERS,
+        "keepa_batch_size": KEEPA_BATCH_SIZE,
     }
 
 
@@ -254,7 +263,13 @@ async def research(req: ResearchRequest) -> ResearchResponse:
 
     # ----- Keepa: JAN -> ASIN, 商品取得 -----
     try:
-        keepa = KeepaClient(api_key=keepa_key, domain=KEEPA_DOMAIN)
+        keepa = KeepaClient(
+            api_key=keepa_key,
+            domain=KEEPA_DOMAIN,
+            offers=KEEPA_OFFERS,
+            batch_size=KEEPA_BATCH_SIZE,
+            batch_sleep_sec=KEEPA_BATCH_SLEEP_SEC,
+        )
     except KeepaError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -453,4 +468,6 @@ async def research(req: ResearchRequest) -> ResearchResponse:
             "yodobashi": bool(enable_scraping),
             "scraping": bool(enable_scraping),
         },
+        keepa_tokens_left=keepa.last_tokens_left,
+        keepa_refill_in_ms=keepa.last_refill_in_ms,
     )

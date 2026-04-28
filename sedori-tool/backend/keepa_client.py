@@ -3,7 +3,12 @@
 Amazon.co.jp (domain=5) から商品データを取得する。
 - ASIN バッチ取得 (最大100件/リクエスト)
 - JAN → ASIN 変換
-- レート制限対策の sleep
+- レート制限対策 (節約モード + 自動 throttle)
+
+トークン消費量 (1 ASIN あたり、概算):
+  - offers なし: 1 トークン
+  - offers=20  : 6 トークン
+  Basic プラン (5/分) 想定では offers なしを強く推奨。
 """
 from __future__ import annotations
 
@@ -17,8 +22,8 @@ log = logging.getLogger(__name__)
 
 KEEPA_BASE_URL = "https://api.keepa.com"
 DEFAULT_DOMAIN = 5  # Amazon.co.jp
-BATCH_SIZE = 100
-BATCH_SLEEP_SEC = 1.2
+DEFAULT_BATCH_SIZE = 100
+DEFAULT_BATCH_SLEEP_SEC = 1.2
 REQUEST_TIMEOUT_SEC = 60.0
 
 # Keepa CSV インデックス (一部)
@@ -36,15 +41,64 @@ class KeepaError(Exception):
 
 
 class KeepaClient:
-    def __init__(self, api_key: str, domain: int = DEFAULT_DOMAIN) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        domain: int = DEFAULT_DOMAIN,
+        offers: int = 0,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        batch_sleep_sec: float = DEFAULT_BATCH_SLEEP_SEC,
+    ) -> None:
         if not api_key:
             raise KeepaError("KEEPA_API_KEY が設定されていません。")
         self.api_key = api_key
         self.domain = domain
+        # 0 にすると offers パラメータ送らず大幅にトークン節約 (1/6)
+        self.offers = max(0, int(offers))
+        self.batch_size = max(1, int(batch_size))
+        self.batch_sleep_sec = max(0.0, float(batch_sleep_sec))
         self._client = httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SEC)
+        # 直近の Keepa からの返答にあるトークン情報 (UI 表示用)
+        self.last_tokens_left: Optional[int] = None
+        self.last_refill_in_ms: Optional[int] = None
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    @property
+    def cost_per_asin(self) -> int:
+        """1 ASIN あたりのおおよそのトークンコスト (offers の有無で変動)。"""
+        return 6 if self.offers > 0 else 1
+
+    def _track_tokens(self, data: dict[str, Any]) -> None:
+        try:
+            tl = data.get("tokensLeft")
+            if isinstance(tl, (int, float)):
+                self.last_tokens_left = int(tl)
+            ri = data.get("refillIn")
+            if isinstance(ri, (int, float)):
+                self.last_refill_in_ms = int(ri)
+        except Exception:
+            pass
+
+    async def _wait_for_tokens(self, needed: int) -> None:
+        """残トークンが必要量を下回りそうなら refill 完了まで sleep。"""
+        if self.last_tokens_left is None:
+            return
+        if self.last_tokens_left >= needed:
+            return
+        wait_ms = self.last_refill_in_ms or 60_000
+        wait_sec = max(1.0, wait_ms / 1000.0 + 1.0)
+        log.warning(
+            "Keepa tokens low (%s, need %s). Sleeping %.1fs for refill.",
+            self.last_tokens_left,
+            needed,
+            wait_sec,
+        )
+        await asyncio.sleep(wait_sec)
+        # refill 後はクライアント側でトークン量が分からないので一旦 None に戻す
+        self.last_tokens_left = None
+        self.last_refill_in_ms = None
 
     # ------------------------------------------------------------------
     # JAN -> ASIN  (/query?type=product&term={JAN}&domain=5)
@@ -61,10 +115,14 @@ class KeepaClient:
         except httpx.HTTPError as exc:
             log.warning("Keepa /query request failed: %s", exc)
             return None
+        try:
+            data = resp.json()
+            self._track_tokens(data)
+        except Exception:
+            data = {}
         if resp.status_code != 200:
             log.warning("Keepa /query returned %s: %s", resp.status_code, resp.text[:200])
             return None
-        data = resp.json()
         asins = data.get("asinList") or data.get("asins") or []
         if isinstance(asins, list) and asins:
             return asins[0]
@@ -76,6 +134,7 @@ class KeepaClient:
     async def jans_to_asins(self, jans: list[str]) -> dict[str, Optional[str]]:
         out: dict[str, Optional[str]] = {}
         for jan in jans:
+            await self._wait_for_tokens(needed=1)
             out[jan] = await self.jan_to_asin(jan)
             await asyncio.sleep(0.5)
         return out
@@ -88,44 +147,62 @@ class KeepaClient:
     ) -> AsyncIterator[tuple[list[dict[str, Any]], int]]:
         """ASIN をバッチに分けて取得し、(products, processed_count) を yield。"""
         processed = 0
-        for i in range(0, len(asins), BATCH_SIZE):
-            batch = asins[i : i + BATCH_SIZE]
-            params = {
+        for i in range(0, len(asins), self.batch_size):
+            batch = asins[i : i + self.batch_size]
+            await self._wait_for_tokens(needed=len(batch) * self.cost_per_asin)
+
+            params: dict[str, Any] = {
                 "key": self.api_key,
                 "domain": self.domain,
                 "asin": ",".join(batch),
                 "stats": 90,
                 "history": 1,
-                "offers": 20,
             }
+            if self.offers > 0:
+                params["offers"] = self.offers
+
+            products = await self._fetch_with_retry(params)
+            processed += len(batch)
+            yield products, processed
+            if i + self.batch_size < len(asins):
+                await asyncio.sleep(self.batch_sleep_sec)
+
+    async def _fetch_with_retry(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        """最大 1 回 429 リトライしつつ /product を叩く。"""
+        for attempt in range(2):
             try:
                 resp = await self._client.get(
                     f"{KEEPA_BASE_URL}/product", params=params
                 )
             except httpx.HTTPError as exc:
                 log.warning("Keepa /product request failed: %s", exc)
-                processed += len(batch)
-                yield [], processed
-                await asyncio.sleep(BATCH_SLEEP_SEC)
-                continue
+                return []
 
-            if resp.status_code != 200:
+            try:
+                data = resp.json()
+                self._track_tokens(data)
+            except Exception:
+                data = {}
+
+            if resp.status_code == 200:
+                return data.get("products") or []
+
+            if resp.status_code == 429 and attempt == 0:
+                wait_ms = data.get("refillIn") or 60_000
+                wait_sec = max(1.0, wait_ms / 1000.0 + 1.0)
                 log.warning(
-                    "Keepa /product returned %s: %s",
-                    resp.status_code,
-                    resp.text[:200],
+                    "Keepa 429 (tokensLeft=%s). Sleeping %.1fs and retrying once.",
+                    data.get("tokensLeft"),
+                    wait_sec,
                 )
-                processed += len(batch)
-                yield [], processed
-                await asyncio.sleep(BATCH_SLEEP_SEC)
+                await asyncio.sleep(wait_sec)
                 continue
 
-            data = resp.json()
-            products = data.get("products") or []
-            processed += len(batch)
-            yield products, processed
-            if i + BATCH_SIZE < len(asins):
-                await asyncio.sleep(BATCH_SLEEP_SEC)
+            log.warning(
+                "Keepa /product returned %s: %s", resp.status_code, resp.text[:200]
+            )
+            return []
+        return []
 
 
 # ----------------------------------------------------------------------
