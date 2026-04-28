@@ -60,11 +60,20 @@ class YodobashiClient:
         try:
             resp = await self._http.get(SEARCH_URL.format(jan=jan))
         except httpx.HTTPError as exc:
-            log.warning("yodobashi scrape failed for %s: %s", jan, exc)
+            log.warning(
+                "yodobashi scrape failed for %s: %s %r",
+                jan,
+                type(exc).__name__,
+                str(exc) or "<empty>",
+            )
             return None
         await asyncio.sleep(SCRAPE_SLEEP_SEC)
         if resp.status_code != 200:
-            log.info("yodobashi scrape %s for %s", resp.status_code, jan)
+            log.warning(
+                "yodobashi scrape %s for %s (anti-bot block の可能性)",
+                resp.status_code,
+                jan,
+            )
             return None
 
         html = resp.text

@@ -52,12 +52,23 @@ class RakutenClient:
             log.warning("Rakuten search failed for %s: %s", keyword, exc)
             return None
         if resp.status_code != 200:
-            log.warning(
-                "Rakuten %s for %s: %s",
-                resp.status_code,
-                keyword,
-                resp.text[:300],
-            )
+            body_short = resp.text[:300]
+            if "applicationId" in body_short:
+                log.error(
+                    "Rakuten %s for %s: %s\n"
+                    "  → 楽天 applicationId は 20桁の数字です。UUID 形式の値を入れていませんか?\n"
+                    "    https://webservice.rakuten.co.jp/app/list で『アプリID/applicationId』を確認してください。",
+                    resp.status_code,
+                    keyword,
+                    body_short,
+                )
+            else:
+                log.warning(
+                    "Rakuten %s for %s: %s",
+                    resp.status_code,
+                    keyword,
+                    body_short,
+                )
             return None
         data = resp.json()
         items = data.get("Items") or []
