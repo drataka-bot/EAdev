@@ -16,6 +16,7 @@ export function loadSettings(): AppSettings {
           typeof parsed.defaultPurchasePrice === "number"
             ? parsed.defaultPurchasePrice
             : null,
+        discordWebhookUrl: parsed.discordWebhookUrl ?? "",
       };
     }
   } catch {
@@ -27,6 +28,7 @@ export function loadSettings(): AppSettings {
     yahooClientId: "",
     enableScraping: false,
     defaultPurchasePrice: null,
+    discordWebhookUrl: "",
   };
 }
 

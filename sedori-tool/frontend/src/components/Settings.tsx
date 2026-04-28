@@ -13,6 +13,7 @@ export function Settings({ open, initial, onClose, onSave }: Props) {
   const [rakutenAppId, setRakutenAppId] = useState(initial.rakutenAppId);
   const [yahooClientId, setYahooClientId] = useState(initial.yahooClientId);
   const [enableScraping, setEnableScraping] = useState(initial.enableScraping);
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState(initial.discordWebhookUrl);
   const [defaultPurchasePrice, setDefaultPurchasePrice] = useState<string>(
     initial.defaultPurchasePrice != null ? String(initial.defaultPurchasePrice) : ""
   );
@@ -28,6 +29,7 @@ export function Settings({ open, initial, onClose, onSave }: Props) {
       rakutenAppId: rakutenAppId.trim(),
       yahooClientId: yahooClientId.trim(),
       enableScraping,
+      discordWebhookUrl: discordWebhookUrl.trim(),
       defaultPurchasePrice:
         parsed != null && !Number.isNaN(parsed) && parsed >= 0 ? parsed : null,
     });
@@ -84,6 +86,15 @@ export function Settings({ open, initial, onClose, onSave }: Props) {
             placeholder="Yahoo Developer ID"
             type={inputType}
             help="https://e.developer.yahoo.co.jp/ で発行。未設定でもツールは動作しますが Yahoo 価格は取得されません。"
+          />
+
+          <ApiKeyField
+            label="Discord Webhook URL (在庫アラート通知)"
+            value={discordWebhookUrl}
+            onChange={setDiscordWebhookUrl}
+            placeholder="https://discord.com/api/webhooks/..."
+            type={inputType}
+            help="ウォッチリストの監視結果をこの Webhook に通知します。Discord の「サーバー設定 → 連携サービス → ウェブフック」で発行。"
           />
 
           <div className="border border-amber-500/40 bg-amber-500/5 rounded p-3">

@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import re
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from dotenv import load_dotenv
@@ -22,6 +23,8 @@ from rakuten_client import RakutenClient
 from scoring import ScoreInput, calc_score
 from yahoo_client import YahooClient
 from yodobashi_client import YodobashiClient
+import monitor
+import watchlist
 
 load_dotenv()
 
@@ -42,6 +45,10 @@ ENABLE_SCRAPING_ENV = os.getenv("ENABLE_SCRAPING", "").strip().lower() in (
     "true",
     "yes",
 )
+DISCORD_WEBHOOK_ENV = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+WATCHLIST_INTERVAL_SEC = int(os.getenv("WATCHLIST_INTERVAL_SEC", "900"))
+# UI から設定された Webhook URL は in-memory で保持 (複数台運用は想定外)
+_runtime_webhook: dict[str, str] = {}
 CORS_ORIGINS = [
     o.strip()
     for o in os.getenv("BACKEND_CORS_ORIGINS", "http://localhost:5173").split(",")
@@ -51,7 +58,39 @@ CORS_ORIGINS = [
 ASIN_RE = re.compile(r"^[A-Z0-9]{10}$")
 JAN_RE = re.compile(r"^\d{8}(\d{5})?$")  # 8 or 13 桁
 
-app = FastAPI(title="電脳せどりリサーチツール", version="1.1.0")
+def _resolve_webhook() -> str:
+    return DISCORD_WEBHOOK_ENV or _runtime_webhook.get("url", "")
+
+
+def _resolve_keepa_for_monitor() -> str:
+    """監視ジョブ用の Keepa キー解決。.env か /api/watchlist/config で渡された値。"""
+    env = _resolve(KEEPA_API_KEY_ENV, None)
+    return env or _runtime_webhook.get("keepa", "")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
+    watchlist.init_db()
+    task = asyncio.create_task(
+        monitor.run_loop(
+            get_api_key=_resolve_keepa_for_monitor,
+            get_webhook=_resolve_webhook,
+            interval_sec=WATCHLIST_INTERVAL_SEC,
+            domain=KEEPA_DOMAIN,
+        )
+    )
+    log.info("watchlist monitor started (interval=%ss)", WATCHLIST_INTERVAL_SEC)
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="電脳せどりリサーチツール", version="1.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -471,3 +510,89 @@ async def research(req: ResearchRequest) -> ResearchResponse:
         keepa_tokens_left=keepa.last_tokens_left,
         keepa_refill_in_ms=keepa.last_refill_in_ms,
     )
+
+
+# ---------------------------------------------------------------------------
+# Watchlist endpoints
+# ---------------------------------------------------------------------------
+class WatchlistItemIn(BaseModel):
+    asin: str
+    title: Optional[str] = None
+    image_url: Optional[str] = None
+    note: Optional[str] = None
+    trigger_restock: bool = True
+    trigger_price_below: Optional[int] = None
+    trigger_rank_below: Optional[int] = None
+    enabled: bool = True
+
+
+class WatchlistConfigIn(BaseModel):
+    discord_webhook_url: Optional[str] = None
+    keepa_api_key: Optional[str] = None
+
+
+@app.get("/api/watchlist")
+async def watchlist_list() -> dict[str, Any]:
+    return {
+        "items": watchlist.list_items(),
+        "interval_sec": WATCHLIST_INTERVAL_SEC,
+        "webhook_configured": bool(_resolve_webhook()),
+        "monitor_keepa_configured": bool(_resolve_keepa_for_monitor()),
+    }
+
+
+@app.post("/api/watchlist")
+async def watchlist_upsert(req: WatchlistItemIn) -> dict[str, Any]:
+    asin = req.asin.strip().upper()
+    if not ASIN_RE.match(asin):
+        raise HTTPException(status_code=400, detail="ASIN の形式が不正です")
+    item = watchlist.upsert_item(
+        asin,
+        title=req.title,
+        image_url=req.image_url,
+        note=req.note,
+        trigger_restock=req.trigger_restock,
+        trigger_price_below=req.trigger_price_below,
+        trigger_rank_below=req.trigger_rank_below,
+        enabled=req.enabled,
+    )
+    return item
+
+
+@app.delete("/api/watchlist/{asin}")
+async def watchlist_delete(asin: str) -> dict[str, str]:
+    asin = asin.strip().upper()
+    watchlist.delete_item(asin)
+    return {"status": "deleted", "asin": asin}
+
+
+@app.get("/api/watchlist/alerts")
+async def watchlist_alerts(limit: int = 50) -> dict[str, Any]:
+    limit = max(1, min(500, limit))
+    return {"alerts": watchlist.list_alerts(limit)}
+
+
+@app.post("/api/watchlist/config")
+async def watchlist_config(req: WatchlistConfigIn) -> dict[str, Any]:
+    """UI から Discord Webhook URL / Keepa キー (監視用) を保存する。"""
+    if req.discord_webhook_url is not None:
+        _runtime_webhook["url"] = req.discord_webhook_url.strip()
+    if req.keepa_api_key is not None:
+        _runtime_webhook["keepa"] = req.keepa_api_key.strip()
+    return {
+        "webhook_configured": bool(_resolve_webhook()),
+        "monitor_keepa_configured": bool(_resolve_keepa_for_monitor()),
+    }
+
+
+@app.post("/api/watchlist/check")
+async def watchlist_check_now() -> dict[str, Any]:
+    """手動でウォッチリストを 1 巡 (テスト用)."""
+    api_key = _resolve_keepa_for_monitor()
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="監視用の Keepa API キーが設定されていません (/api/watchlist/config か .env で指定)",
+        )
+    fired = await monitor.check_once(api_key, _resolve_webhook(), domain=KEEPA_DOMAIN)
+    return {"fired": fired}

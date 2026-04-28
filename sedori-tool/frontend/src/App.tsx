@@ -3,6 +3,7 @@ import { InputPanel } from "./components/InputPanel";
 import { ProgressBar } from "./components/ProgressBar";
 import { ResultTable } from "./components/ResultTable";
 import { Settings } from "./components/Settings";
+import { WatchlistPanel } from "./components/WatchlistPanel";
 import type { AppSettings, ProductItem, ResearchResponse, ScoreGrade } from "./types";
 import { exportCsv } from "./utils/export";
 import { calcScore } from "./utils/scoring";
@@ -24,9 +25,12 @@ const INITIAL_PROGRESS: Progress = {
   active: false,
 };
 
+type Tab = "research" | "watchlist";
+
 function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tab, setTab] = useState<Tab>("research");
   const [items, setItems] = useState<ProductItem[]>([]);
   const [progress, setProgress] = useState<Progress>(INITIAL_PROGRESS);
   const [error, setError] = useState<string | null>(null);
@@ -208,27 +212,59 @@ function App() {
         </div>
       </header>
 
+      <nav className="max-w-[1600px] mx-auto px-6 pt-4 flex gap-2 text-sm">
+        <button
+          onClick={() => setTab("research")}
+          className={`px-4 py-2 rounded-t border-b-2 transition ${
+            tab === "research"
+              ? "border-accent text-accent bg-base-700/50"
+              : "border-transparent text-gray-400 hover:text-gray-200"
+          }`}
+        >
+          リサーチ
+        </button>
+        <button
+          onClick={() => setTab("watchlist")}
+          className={`px-4 py-2 rounded-t border-b-2 transition ${
+            tab === "watchlist"
+              ? "border-accent text-accent bg-base-700/50"
+              : "border-transparent text-gray-400 hover:text-gray-200"
+          }`}
+        >
+          ウォッチリスト / 在庫アラート
+        </button>
+      </nav>
+
       <main className="max-w-[1600px] mx-auto px-6 py-6 space-y-5">
-        <InputPanel onSubmit={handleSubmit} loading={loading} />
+        {tab === "research" ? (
+          <>
+            <InputPanel onSubmit={handleSubmit} loading={loading} />
 
-        <ProgressBar
-          current={progress.current}
-          total={progress.total}
-          speed={progress.speed}
-          active={progress.active}
-        />
+            <ProgressBar
+              current={progress.current}
+              total={progress.total}
+              speed={progress.speed}
+              active={progress.active}
+            />
 
-        {error && (
-          <div className="bg-red-900/40 border border-red-500/50 rounded p-3 text-red-200 text-sm">
-            エラー: {error}
-          </div>
+            {error && (
+              <div className="bg-red-900/40 border border-red-500/50 rounded p-3 text-red-200 text-sm">
+                エラー: {error}
+              </div>
+            )}
+
+            <ResultTable
+              items={items}
+              onPurchasePriceChange={handlePurchasePriceChange}
+              onExport={exportCsv}
+            />
+          </>
+        ) : (
+          <WatchlistPanel
+            webhookUrl={settings.discordWebhookUrl}
+            keepaApiKey={settings.apiKey}
+          />
         )}
-
-        <ResultTable
-          items={items}
-          onPurchasePriceChange={handlePurchasePriceChange}
-          onExport={exportCsv}
-        />
       </main>
 
       <Settings

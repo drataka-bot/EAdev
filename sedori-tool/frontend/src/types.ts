@@ -77,6 +77,39 @@ export interface AppSettings {
   yahooClientId: string;
   enableScraping: boolean;
   defaultPurchasePrice: number | null;
+  discordWebhookUrl: string;
+}
+
+export interface WatchItem {
+  asin: string;
+  title: string | null;
+  image_url: string | null;
+  note: string | null;
+  trigger_restock: number;
+  trigger_price_below: number | null;
+  trigger_rank_below: number | null;
+  enabled: number;
+  added_at: number;
+  last_checked_at: number | null;
+  last_in_stock: number | null;
+  last_price: number | null;
+  last_rank: number | null;
+}
+
+export interface WatchAlert {
+  id: number;
+  asin: string;
+  type: string;
+  message: string | null;
+  payload: Record<string, unknown>;
+  created_at: number;
+}
+
+export interface WatchlistResponse {
+  items: WatchItem[];
+  interval_sec: number;
+  webhook_configured: boolean;
+  monitor_keepa_configured: boolean;
 }
 
 export interface AdvancedFilter {
