@@ -28,14 +28,39 @@ class RakutenClient:
         await self._client.aclose()
 
     async def search(
-        self, keyword: str, shop_code: Optional[str] = None
+        self,
+        keyword: Optional[str] = None,
+        *,
+        jan: Optional[str] = None,
+        title: Optional[str] = None,
+        shop_code: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
-        """keyword (JAN または商品名) で検索し、最安候補を返す。
+        """商品を検索し、最安候補を返す。
 
-        shop_code を指定すると特定店舗 (例: 'biccamera') のみが対象になる。
+        優先順位は jan > title > keyword (後方互換)。
+        JAN で 0 件なら title でフォールバック検索する。
+        shop_code を指定すると特定店舗 (例: 'biccamera') のみが対象。
         """
-        if not keyword:
+        candidates: list[tuple[str, str]] = []
+        if jan:
+            candidates.append(("jan", jan))
+        if title:
+            candidates.append(("title", title))
+        if not candidates and keyword:
+            candidates.append(("keyword", keyword))
+        if not candidates:
             return None
+
+        for label, term in candidates:
+            result = await self._search_once(term, shop_code=shop_code)
+            if result and result.get("price"):
+                result["matched_by"] = label
+                return result
+        return None
+
+    async def _search_once(
+        self, keyword: str, shop_code: Optional[str]
+    ) -> Optional[dict[str, Any]]:
         params: dict[str, Any] = {
             "applicationId": self.app_id,
             "keyword": keyword,
@@ -74,7 +99,6 @@ class RakutenClient:
         items = data.get("Items") or []
         if not items:
             return None
-        # formatVersion=2 では Items は dict のリスト
         first = items[0]
         if not isinstance(first, dict):
             return None

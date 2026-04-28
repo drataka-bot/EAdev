@@ -32,14 +32,33 @@ class YahooClient:
         query: Optional[str] = None,
         seller_id: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
+        """JAN を最優先、ヒット 0 件なら query でフォールバック。"""
+        if jan:
+            r = await self._search_once(seller_id=seller_id, jan_code=jan)
+            if r and r.get("price"):
+                r["matched_by"] = "jan"
+                return r
+        if query:
+            r = await self._search_once(seller_id=seller_id, query=query)
+            if r and r.get("price"):
+                r["matched_by"] = "title"
+                return r
+        return None
+
+    async def _search_once(
+        self,
+        seller_id: Optional[str] = None,
+        jan_code: Optional[str] = None,
+        query: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
         params: dict[str, Any] = {
             "appid": self.client_id,
             "results": 5,
             "sort": "+price",
             "in_stock": "true",
         }
-        if jan:
-            params["jan_code"] = jan
+        if jan_code:
+            params["jan_code"] = jan_code
         elif query:
             params["query"] = query
         else:
@@ -50,13 +69,13 @@ class YahooClient:
         try:
             resp = await self._client.get(ENDPOINT, params=params)
         except httpx.HTTPError as exc:
-            log.warning("Yahoo search failed for %s: %s", jan or query, exc)
+            log.warning("Yahoo search failed for %s: %s", jan_code or query, exc)
             return None
         if resp.status_code != 200:
             log.warning(
                 "Yahoo %s for %s: %s",
                 resp.status_code,
-                jan or query,
+                jan_code or query,
                 resp.text[:300],
             )
             return None

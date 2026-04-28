@@ -357,10 +357,11 @@ async def research(req: ResearchRequest) -> ResearchResponse:
             if not rakuten:
                 return
             for asin, prod in asin_to_product.items():
-                key = prod.get("jan") or prod.get("title")
-                if not key:
+                jan = prod.get("jan")
+                title = prod.get("title")
+                if not jan and not title:
                     continue
-                rakuten_results[asin] = await rakuten.search(key)
+                rakuten_results[asin] = await rakuten.search(jan=jan, title=title)
                 await asyncio.sleep(0)
 
         async def run_yahoo() -> None:
@@ -369,10 +370,7 @@ async def research(req: ResearchRequest) -> ResearchResponse:
             for asin, prod in asin_to_product.items():
                 jan = prod.get("jan")
                 title = prod.get("title")
-                if jan:
-                    yahoo_results[asin] = await yahoo.search(jan=jan)
-                elif title:
-                    yahoo_results[asin] = await yahoo.search(query=title)
+                yahoo_results[asin] = await yahoo.search(jan=jan, query=title)
 
         async def run_bic() -> None:
             for asin, prod in asin_to_product.items():

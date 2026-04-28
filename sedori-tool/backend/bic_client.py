@@ -66,23 +66,26 @@ class BicCameraClient:
     async def search(
         self, jan: Optional[str], title: Optional[str] = None
     ) -> Optional[dict[str, Any]]:
-        keyword = jan or title
-        if not keyword:
+        if not jan and not title:
             return None
 
-        # 1) 楽天 ビック公式店
+        # 1) 楽天 ビック公式店 (JAN 優先 → 商品名フォールバック)
         if self.rakuten:
-            r = await self.rakuten.search(keyword, shop_code=RAKUTEN_BIC_SHOP)
+            r = await self.rakuten.search(
+                jan=jan, title=title, shop_code=RAKUTEN_BIC_SHOP
+            )
             if r and r.get("price"):
                 return {**r, "source": "rakuten"}
 
-        # 2) Yahoo ビック店
-        if self.yahoo and jan:
-            y = await self.yahoo.search(jan=jan, seller_id=YAHOO_BIC_SELLER)
+        # 2) Yahoo ビック店 (JAN 優先 → 商品名フォールバック)
+        if self.yahoo:
+            y = await self.yahoo.search(
+                jan=jan, query=title, seller_id=YAHOO_BIC_SELLER
+            )
             if y and y.get("price"):
                 return {**y, "source": "yahoo"}
 
-        # 3) biccamera.com スクレイピング (オプトイン)
+        # 3) biccamera.com スクレイピング (オプトイン、JAN 必須)
         if self.allow_scraping and self._http and jan:
             scraped = await self._scrape(jan)
             if scraped:
