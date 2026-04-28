@@ -27,7 +27,8 @@ YAHOO_BIC_SELLER = "biccamera"
 SCRAPE_BASE = "https://www.biccamera.com"
 SCRAPE_SEARCH_URL = "https://www.biccamera.com/bc/category/"
 SCRAPE_SLEEP_SEC = 2.0
-SCRAPE_TIMEOUT_SEC = 15.0
+SCRAPE_TIMEOUT_SEC = 6.0
+SCRAPE_FAIL_THRESHOLD = 3  # 連続失敗でセッション中スクレイプ停止
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
@@ -51,6 +52,9 @@ class BicCameraClient:
         self.yahoo = yahoo
         self.allow_scraping = allow_scraping
         self._http: Optional[httpx.AsyncClient] = None
+        # サーキットブレーカー: 連続失敗で以降のリクエストを止める
+        self._consecutive_failures = 0
+        self._circuit_open = False
         if allow_scraping:
             self._http = httpx.AsyncClient(
                 timeout=SCRAPE_TIMEOUT_SEC,
@@ -86,12 +90,29 @@ class BicCameraClient:
                 return {**y, "source": "yahoo"}
 
         # 3) biccamera.com スクレイピング (オプトイン、JAN 必須)
-        if self.allow_scraping and self._http and jan:
+        if (
+            self.allow_scraping
+            and self._http
+            and jan
+            and not self._circuit_open
+        ):
             scraped = await self._scrape(jan)
             if scraped:
                 return {**scraped, "source": "biccamera"}
 
         return None
+
+    def _record_failure(self) -> None:
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= SCRAPE_FAIL_THRESHOLD:
+            self._circuit_open = True
+            log.warning(
+                "biccamera: 連続 %d 回失敗。セッション中の本店スクレイプを停止します。",
+                self._consecutive_failures,
+            )
+
+    def _record_success(self) -> None:
+        self._consecutive_failures = 0
 
     async def _scrape(self, jan: str) -> Optional[dict[str, Any]]:
         try:
@@ -106,6 +127,7 @@ class BicCameraClient:
                 type(exc).__name__,
                 str(exc) or "<empty>",
             )
+            self._record_failure()
             return None
         await asyncio.sleep(SCRAPE_SLEEP_SEC)
         if resp.status_code != 200:
@@ -114,7 +136,9 @@ class BicCameraClient:
                 resp.status_code,
                 jan,
             )
+            self._record_failure()
             return None
+        self._record_success()
 
         html = resp.text
         # 商品が無い場合 "該当する商品はありません" 等が表示される

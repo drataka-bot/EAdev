@@ -24,7 +24,8 @@ log = logging.getLogger(__name__)
 BASE = "https://www.yodobashi.com"
 SEARCH_URL = "https://www.yodobashi.com/?word={jan}"
 SCRAPE_SLEEP_SEC = 2.0
-SCRAPE_TIMEOUT_SEC = 20.0
+SCRAPE_TIMEOUT_SEC = 6.0
+SCRAPE_FAIL_THRESHOLD = 3  # 連続失敗でセッション中スクレイプ停止
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
@@ -42,6 +43,9 @@ class YodobashiClient:
     def __init__(self, allow_scraping: bool = False) -> None:
         self.allow_scraping = allow_scraping
         self._http: Optional[httpx.AsyncClient] = None
+        # サーキットブレーカー
+        self._consecutive_failures = 0
+        self._circuit_open = False
         if allow_scraping:
             self._http = httpx.AsyncClient(
                 timeout=SCRAPE_TIMEOUT_SEC,
@@ -54,8 +58,22 @@ class YodobashiClient:
             await self._http.aclose()
             self._http = None
 
+    def _record_failure(self) -> None:
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= SCRAPE_FAIL_THRESHOLD:
+            self._circuit_open = True
+            log.warning(
+                "yodobashi: 連続 %d 回失敗。セッション中の本店スクレイプを停止します。",
+                self._consecutive_failures,
+            )
+
+    def _record_success(self) -> None:
+        self._consecutive_failures = 0
+
     async def search(self, jan: Optional[str]) -> Optional[dict[str, Any]]:
         if not self.allow_scraping or not self._http or not jan:
+            return None
+        if self._circuit_open:
             return None
         try:
             resp = await self._http.get(SEARCH_URL.format(jan=jan))
@@ -66,6 +84,7 @@ class YodobashiClient:
                 type(exc).__name__,
                 str(exc) or "<empty>",
             )
+            self._record_failure()
             return None
         await asyncio.sleep(SCRAPE_SLEEP_SEC)
         if resp.status_code != 200:
@@ -74,7 +93,9 @@ class YodobashiClient:
                 resp.status_code,
                 jan,
             )
+            self._record_failure()
             return None
+        self._record_success()
 
         html = resp.text
         if "検索結果はありません" in html or "該当する商品が見つかりません" in html:

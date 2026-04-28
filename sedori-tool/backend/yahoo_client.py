@@ -2,11 +2,13 @@
 
 公式: https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch
 - jan_code パラメータで JAN 直接検索が可能
+- 429 (URL レート制限) を受けたらクールダウン期間スキップする
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Optional
 
 import httpx
@@ -14,7 +16,8 @@ import httpx
 log = logging.getLogger(__name__)
 
 ENDPOINT = "https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch"
-SLEEP_SEC = 0.3
+SLEEP_SEC = 1.0
+COOLDOWN_AFTER_429_SEC = 60.0
 TIMEOUT_SEC = 20.0
 
 
@@ -22,9 +25,21 @@ class YahooClient:
     def __init__(self, client_id: str) -> None:
         self.client_id = client_id
         self._client = httpx.AsyncClient(timeout=TIMEOUT_SEC)
+        # 429 を受けたら一定時間クールダウン
+        self._cooldown_until: float = 0.0
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    def _in_cooldown(self) -> bool:
+        return time.monotonic() < self._cooldown_until
+
+    def _trigger_cooldown(self) -> None:
+        self._cooldown_until = time.monotonic() + COOLDOWN_AFTER_429_SEC
+        log.warning(
+            "Yahoo: 429 を受信。以降 %ss はリクエストをスキップします。",
+            int(COOLDOWN_AFTER_429_SEC),
+        )
 
     async def search(
         self,
@@ -33,11 +48,15 @@ class YahooClient:
         seller_id: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         """JAN を最優先、ヒット 0 件なら query でフォールバック。"""
+        if self._in_cooldown():
+            return None
         if jan:
             r = await self._search_once(seller_id=seller_id, jan_code=jan)
             if r and r.get("price"):
                 r["matched_by"] = "jan"
                 return r
+            if self._in_cooldown():
+                return None
         if query:
             r = await self._search_once(seller_id=seller_id, query=query)
             if r and r.get("price"):
@@ -69,8 +88,24 @@ class YahooClient:
         try:
             resp = await self._client.get(ENDPOINT, params=params)
         except httpx.HTTPError as exc:
-            log.warning("Yahoo search failed for %s: %s", jan_code or query, exc)
+            log.warning(
+                "Yahoo search failed for %s: %s",
+                jan_code or query,
+                exc,
+            )
             return None
+        # ループ間の最低スリープ
+        await asyncio.sleep(SLEEP_SEC)
+
+        if resp.status_code == 429:
+            self._trigger_cooldown()
+            log.warning(
+                "Yahoo 429 for %s: %s",
+                jan_code or query,
+                resp.text[:200],
+            )
+            return None
+
         if resp.status_code != 200:
             log.warning(
                 "Yahoo %s for %s: %s",
@@ -79,6 +114,7 @@ class YahooClient:
                 resp.text[:300],
             )
             return None
+
         data = resp.json()
         hits = data.get("hits") or []
         if not hits:
