@@ -15,12 +15,16 @@ type SortKey =
   | "purchase_price"
   | "profit"
   | "profit_rate"
+  | "monthly_profit"
   | "rank_current"
   | "monthly_sales"
   | "sales_30d"
   | "sales_90d"
   | "new_offer_count"
-  | "fba_offer_count";
+  | "fba_offer_count"
+  | "price_avg_30d"
+  | "price_max_all"
+  | "price_min_all";
 
 type SortDir = "asc" | "desc";
 
@@ -70,6 +74,14 @@ function sortValue(item: ProductItem, key: SortKey): number | string {
       return item.profit ?? Number.MIN_SAFE_INTEGER;
     case "profit_rate":
       return item.profit_rate ?? Number.MIN_SAFE_INTEGER;
+    case "monthly_profit":
+      return item.monthly_profit ?? Number.MIN_SAFE_INTEGER;
+    case "price_avg_30d":
+      return item.price_avg_30d ?? Number.MAX_SAFE_INTEGER;
+    case "price_max_all":
+      return item.price_max_all ?? Number.MAX_SAFE_INTEGER;
+    case "price_min_all":
+      return item.price_min_all ?? Number.MAX_SAFE_INTEGER;
     case "rank_current":
       return item.rank_current ?? Number.MAX_SAFE_INTEGER;
     case "monthly_sales":
@@ -100,6 +112,8 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
   const [excludeAmazon, setExcludeAmazon] = useState(false);
   const [profitableOnly, setProfitableOnly] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [pageSize, setPageSize] = useState<number>(20);
+  const [page, setPage] = useState<number>(1);
 
   const toNumber = (v: string): number | null => {
     if (v.trim() === "") return null;
@@ -177,6 +191,13 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
     sortKey,
     sortDir,
   ]);
+
+  // フィルタが変わったら 1 ページ目に戻す
+  const filteredCount = visible.length;
+  const totalPages = Math.max(1, Math.ceil(filteredCount / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const pageRows = visible.slice(pageStart, pageStart + pageSize);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -273,13 +294,27 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-400">
-            表示: <span className="text-accent font-bold">{visible.length}</span> /{" "}
+            表示: <span className="text-accent font-bold">{filteredCount}</span> /{" "}
             {items.length} 件
           </span>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setPage(1);
+            }}
+            className="bg-base-900 border border-base-500 rounded px-2 py-1 text-sm text-gray-100"
+          >
+            {[10, 20, 50, 100].map((n) => (
+              <option key={n} value={n}>
+                {n} 件/ページ
+              </option>
+            ))}
+          </select>
           <button
             type="button"
             onClick={() => onExport(visible)}
-            disabled={visible.length === 0}
+            disabled={filteredCount === 0}
             className="px-3 py-1 bg-base-600 hover:bg-base-500 disabled:opacity-50 border border-base-400 rounded text-sm text-gray-100"
           >
             CSV 出力
@@ -361,11 +396,23 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead className="text-xs text-gray-300 bg-base-800/70 sticky top-0">
+            <tr className="border-b border-base-600 text-[10px] uppercase tracking-wide text-gray-500">
+              <th className="px-3 py-1" colSpan={1}>判定</th>
+              <th className="px-3 py-1 text-left" colSpan={3}>商品情報</th>
+              <th className="px-3 py-1 text-right" colSpan={3}>価格</th>
+              <th className="px-3 py-1 text-right" colSpan={4}>価格履歴</th>
+              <th className="px-3 py-1 text-right" colSpan={4}>仕入れ候補</th>
+              <th className="px-3 py-1 text-right" colSpan={1}>仕入</th>
+              <th className="px-3 py-1 text-right" colSpan={3}>利益</th>
+              <th className="px-3 py-1 text-right" colSpan={4}>販売実績</th>
+              <th className="px-3 py-1 text-right" colSpan={2}>競合</th>
+              <th className="px-3 py-1 text-center" colSpan={2}>リンク</th>
+            </tr>
             <tr>
               <Th onClick={() => handleSort("score")} label={`スコア${sortArrow("score")}`} />
+              <th className="px-2 py-2 text-left">画像</th>
               <Th onClick={() => handleSort("title")} label={`商品名${sortArrow("title")}`} />
-              <th className="px-3 py-2 text-left">ASIN</th>
-              <th className="px-3 py-2 text-center">サイズ</th>
+              <th className="px-3 py-2 text-left">ASIN / サイズ</th>
               <Th
                 onClick={() => handleSort("current_price")}
                 label={`現在価格${sortArrow("current_price")}`}
@@ -381,6 +428,22 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 label={`中古最安${sortArrow("used_price")}`}
                 align="right"
               />
+              <Th
+                onClick={() => handleSort("price_max_all")}
+                label={`過去最高${sortArrow("price_max_all")}`}
+                align="right"
+              />
+              <Th
+                onClick={() => handleSort("price_min_all")}
+                label={`過去最低${sortArrow("price_min_all")}`}
+                align="right"
+              />
+              <Th
+                onClick={() => handleSort("price_avg_30d")}
+                label={`30日平均${sortArrow("price_avg_30d")}`}
+                align="right"
+              />
+              <th className="px-3 py-2 text-right">変動率</th>
               <Th
                 onClick={() => handleSort("rakuten_price")}
                 label={`楽天${sortArrow("rakuten_price")}`}
@@ -414,6 +477,11 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
               <Th
                 onClick={() => handleSort("profit_rate")}
                 label={`利益率${sortArrow("profit_rate")}`}
+                align="right"
+              />
+              <Th
+                onClick={() => handleSort("monthly_profit")}
+                label={`月予測利益${sortArrow("monthly_profit")}`}
                 align="right"
               />
               <Th
@@ -451,14 +519,14 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
             </tr>
           </thead>
           <tbody>
-            {visible.length === 0 && (
+            {pageRows.length === 0 && (
               <tr>
-                <td colSpan={22} className="text-center py-10 text-gray-500">
+                <td colSpan={27} className="text-center py-10 text-gray-500">
                   データがありません
                 </td>
               </tr>
             )}
-            {visible.map((item) => (
+            {pageRows.map((item) => (
               <tr
                 key={`${item.input_code}-${item.asin ?? "x"}`}
                 className="border-t border-base-600 hover:bg-base-700/40"
@@ -466,7 +534,25 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 <td className="px-3 py-2">
                   <ScoreBadge grade={item.score} />
                 </td>
-                <td className="px-3 py-2 max-w-[280px]">
+                <td className="px-2 py-2">
+                  {item.image_url ? (
+                    <a
+                      href={item.amazon_url ?? "#"}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <img
+                        src={item.image_url}
+                        alt=""
+                        loading="lazy"
+                        className="w-12 h-12 object-contain border border-base-600 rounded bg-white/5"
+                      />
+                    </a>
+                  ) : (
+                    <div className="w-12 h-12 border border-base-700 rounded bg-base-800" />
+                  )}
+                </td>
+                <td className="px-3 py-2 max-w-[260px]">
                   {item.title ? (
                     <a
                       href={item.amazon_url ?? "#"}
@@ -485,6 +571,11 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                   {item.brand && (
                     <div className="text-xs text-gray-500 mt-0.5">{item.brand}</div>
                   )}
+                  {item.list_price != null && (
+                    <div className="text-[10px] text-gray-500">
+                      定価: {yen(item.list_price)}
+                    </div>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-1">
@@ -502,14 +593,17 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                       </button>
                     )}
                   </div>
-                </td>
-                <td className="px-3 py-2 text-center">
-                  {item.size_category ? (
-                    <span className="text-xs px-2 py-0.5 rounded bg-base-600 text-gray-200">
-                      {item.size_category}
-                    </span>
-                  ) : (
-                    <span className="text-gray-600 text-xs">-</span>
+                  {item.size_category && (
+                    <div className="text-[10px] mt-0.5">
+                      <span className="px-1.5 py-0.5 rounded bg-base-600 text-gray-200">
+                        {item.size_category}
+                      </span>
+                    </div>
+                  )}
+                  {item.release_date && (
+                    <div className="text-[10px] text-gray-500 mt-0.5">
+                      発売: {item.release_date}
+                    </div>
                   )}
                 </td>
                 <td className="px-3 py-2 text-right text-gray-200">
@@ -532,6 +626,24 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 </td>
                 <td className="px-3 py-2 text-right text-gray-200">
                   {yen(item.used_price)}
+                </td>
+                <td className="px-3 py-2 text-right text-gray-300">
+                  {yen(item.price_max_all)}
+                </td>
+                <td className="px-3 py-2 text-right text-gray-300">
+                  {yen(item.price_min_all)}
+                </td>
+                <td className="px-3 py-2 text-right text-gray-200">
+                  {yen(item.price_avg_30d)}
+                  {item.price_avg_90d != null && (
+                    <div className="text-[10px] text-gray-500">
+                      90日: {yen(item.price_avg_90d)}
+                    </div>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <ChangeRate value={item.price_change_30d} suffix="30d" />
+                  <ChangeRate value={item.price_change_90d} suffix="90d" />
                 </td>
                 <td className="px-3 py-2 text-right">
                   <OffersCell
@@ -627,6 +739,18 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 >
                   {item.profit_rate == null ? "-" : `${item.profit_rate.toFixed(1)}%`}
                 </td>
+                <td
+                  className={`px-3 py-2 text-right ${
+                    item.monthly_profit == null
+                      ? "text-gray-500"
+                      : item.monthly_profit < 0
+                      ? "text-red-400"
+                      : "text-emerald-300"
+                  }`}
+                >
+                  {item.monthly_profit == null ? "-" : yen(item.monthly_profit)}
+                  <div className="text-[10px] text-gray-500">/月</div>
+                </td>
                 <td className="px-3 py-2 text-right text-gray-200">
                   {num(item.rank_current)}
                   {item.rank_avg90 != null && (
@@ -694,6 +818,53 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
           </tbody>
         </table>
       </div>
+
+      {/* --- ページング --- */}
+      {filteredCount > 0 && (
+        <div className="flex items-center justify-between mt-3 text-sm text-gray-300">
+          <div>
+            {pageStart + 1}〜{Math.min(pageStart + pageSize, filteredCount)} 件目 /{" "}
+            {filteredCount} 件中
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPage(1)}
+              disabled={safePage <= 1}
+              className="px-2 py-1 bg-base-700 hover:bg-base-600 disabled:opacity-40 border border-base-500 rounded text-xs"
+            >
+              «
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              className="px-2 py-1 bg-base-700 hover:bg-base-600 disabled:opacity-40 border border-base-500 rounded text-xs"
+            >
+              ‹
+            </button>
+            <span className="px-3 text-gray-400">
+              {safePage} / {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              className="px-2 py-1 bg-base-700 hover:bg-base-600 disabled:opacity-40 border border-base-500 rounded text-xs"
+            >
+              ›
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage(totalPages)}
+              disabled={safePage >= totalPages}
+              className="px-2 py-1 bg-base-700 hover:bg-base-600 disabled:opacity-40 border border-base-500 rounded text-xs"
+            >
+              »
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -857,6 +1028,33 @@ function OffersCell({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ChangeRate({
+  value,
+  suffix,
+}: {
+  value: number | null;
+  suffix: string;
+}) {
+  if (value == null) {
+    return <div className="text-[11px] text-gray-600">-</div>;
+  }
+  const positive = value > 0;
+  const negative = value < 0;
+  const cls = positive
+    ? "text-red-400"
+    : negative
+    ? "text-emerald-400"
+    : "text-gray-300";
+  const sign = positive ? "+" : "";
+  return (
+    <div className={`text-[11px] ${cls}`}>
+      {sign}
+      {value.toFixed(1)}%{" "}
+      <span className="text-[9px] text-gray-500">{suffix}</span>
     </div>
   );
 }
