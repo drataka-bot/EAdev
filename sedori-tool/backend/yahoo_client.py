@@ -29,6 +29,17 @@ class YahooClient:
         self._cooldown_until: float = 0.0
         # 並行呼び出しを直列化 (汎用検索 + ビック店舗検索の競合を防ぐ)
         self._req_lock = asyncio.Lock()
+        # UI 表示用カウンタ
+        self.success_count: int = 0
+        self.error_count: int = 0
+        self.rate_limited_count: int = 0
+        self.last_error: Optional[str] = None
+
+    def reset_stats(self) -> None:
+        self.success_count = 0
+        self.error_count = 0
+        self.rate_limited_count = 0
+        self.last_error = None
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -117,6 +128,8 @@ class YahooClient:
             try:
                 resp = await self._client.get(ENDPOINT, params=params)
             except httpx.HTTPError as exc:
+                self.error_count += 1
+                self.last_error = f"network: {type(exc).__name__}"
                 log.warning(
                     "Yahoo search failed for %s: %s",
                     jan_code or query,
@@ -128,6 +141,8 @@ class YahooClient:
 
         if resp.status_code == 429:
             self._trigger_cooldown()
+            self.rate_limited_count += 1
+            self.last_error = "429: レート制限超過"
             log.warning(
                 "Yahoo 429 for %s: %s",
                 jan_code or query,
@@ -136,6 +151,8 @@ class YahooClient:
             return []
 
         if resp.status_code != 200:
+            self.error_count += 1
+            self.last_error = f"HTTP {resp.status_code}"
             log.warning(
                 "Yahoo %s for %s: %s",
                 resp.status_code,
@@ -143,6 +160,7 @@ class YahooClient:
                 resp.text[:300],
             )
             return []
+        self.success_count += 1
 
         data = resp.json()
         hits_arr = data.get("hits") or []

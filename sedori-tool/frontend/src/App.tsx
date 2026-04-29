@@ -4,7 +4,13 @@ import { ProgressBar } from "./components/ProgressBar";
 import { ResultTable } from "./components/ResultTable";
 import { Settings } from "./components/Settings";
 import { WatchlistPanel } from "./components/WatchlistPanel";
-import type { AppSettings, ProductItem, ResearchResponse, ScoreGrade } from "./types";
+import type {
+  AppSettings,
+  ProductItem,
+  ResearchResponse,
+  ScoreGrade,
+  SourceStatus,
+} from "./types";
 import { exportCsv } from "./utils/export";
 import { calcScore } from "./utils/scoring";
 import { loadSettings, saveSettings } from "./utils/settings";
@@ -88,6 +94,8 @@ function App() {
   } | null>(null);
   const [keepaTokens, setKeepaTokens] = useState<number | null>(null);
   const [keepaRefillMs, setKeepaRefillMs] = useState<number | null>(null);
+  const [rakutenStatus, setRakutenStatus] = useState<SourceStatus | null>(null);
+  const [yahooStatus, setYahooStatus] = useState<SourceStatus | null>(null);
 
   const handleSubmit = useCallback(
     async (codes: string[]) => {
@@ -117,6 +125,8 @@ function App() {
         setSources(data.sources);
         setKeepaTokens(data.keepa_tokens_left ?? null);
         setKeepaRefillMs(data.keepa_refill_in_ms ?? null);
+        setRakutenStatus(data.rakuten_status ?? null);
+        setYahooStatus(data.yahoo_status ?? null);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -247,6 +257,11 @@ function App() {
               active={progress.active}
             />
 
+            <SourceStatusBanner
+              rakuten={rakutenStatus}
+              yahoo={yahooStatus}
+            />
+
             {error && (
               <div className="bg-red-900/40 border border-red-500/50 rounded p-3 text-red-200 text-sm">
                 エラー: {error}
@@ -305,6 +320,40 @@ function KeepaTokenBadge({
       🪙 {tokens.toLocaleString()}
       {isLow && refillSec != null ? ` (補充 ${refillSec}s)` : ""}
     </span>
+  );
+}
+
+function SourceStatusBanner({
+  rakuten,
+  yahoo,
+}: {
+  rakuten: SourceStatus | null;
+  yahoo: SourceStatus | null;
+}) {
+  const lines: { label: string; status: SourceStatus; color: string }[] = [];
+  if (rakuten && (rakuten.error || rakuten.rate_limited)) {
+    lines.push({ label: "楽天", status: rakuten, color: "text-red-300" });
+  }
+  if (yahoo && (yahoo.error || yahoo.rate_limited)) {
+    lines.push({ label: "Yahoo", status: yahoo, color: "text-purple-300" });
+  }
+  if (lines.length === 0) return null;
+  return (
+    <div className="bg-amber-900/30 border border-amber-500/40 rounded p-3 text-sm space-y-1">
+      <div className="font-bold text-amber-300">⚠ ソース取得に問題が発生しました</div>
+      {lines.map((l) => (
+        <div key={l.label} className={l.color}>
+          {l.label}: 成功 {l.status.success} / エラー {l.status.error} / レート制限{" "}
+          {l.status.rate_limited}
+          {l.status.last_error ? ` - 最終: ${l.status.last_error}` : ""}
+          {l.status.rate_limited > 0 && (
+            <span className="ml-2 text-xs text-amber-200">
+              (60秒のクールダウン中の可能性あり。再リサーチで自動再開)
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 

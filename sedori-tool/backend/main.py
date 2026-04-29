@@ -186,6 +186,13 @@ class ProductItem(BaseModel):
     error: Optional[str] = None
 
 
+class SourceStatus(BaseModel):
+    success: int = 0
+    error: int = 0
+    rate_limited: int = 0
+    last_error: Optional[str] = None
+
+
 class ResearchResponse(BaseModel):
     items: list[ProductItem]
     total: int
@@ -194,6 +201,8 @@ class ResearchResponse(BaseModel):
     sources: dict[str, bool]
     keepa_tokens_left: Optional[int] = None
     keepa_refill_in_ms: Optional[int] = None
+    rakuten_status: Optional[SourceStatus] = None
+    yahoo_status: Optional[SourceStatus] = None
 
 
 class ScoreRequest(BaseModel):
@@ -426,6 +435,11 @@ async def research(req: ResearchRequest) -> ResearchResponse:
 
     rakuten = await _get_rakuten(rakuten_id)
     yahoo = await _get_yahoo(yahoo_id)
+    # 今回のリサーチ分の成否カウンタをリセット
+    if rakuten is not None:
+        rakuten.reset_stats()
+    if yahoo is not None:
+        yahoo.reset_stats()
     # Bic 用にも同じインスタンスを共有 (Rakuten 1 req/sec 制限を守るため)
     bic = BicCameraClient(
         rakuten=rakuten,
@@ -625,6 +639,26 @@ async def research(req: ResearchRequest) -> ResearchResponse:
         },
         keepa_tokens_left=keepa.last_tokens_left,
         keepa_refill_in_ms=keepa.last_refill_in_ms,
+        rakuten_status=(
+            SourceStatus(
+                success=rakuten.success_count,
+                error=rakuten.error_count,
+                rate_limited=rakuten.rate_limited_count,
+                last_error=rakuten.last_error,
+            )
+            if rakuten is not None
+            else None
+        ),
+        yahoo_status=(
+            SourceStatus(
+                success=yahoo.success_count,
+                error=yahoo.error_count,
+                rate_limited=yahoo.rate_limited_count,
+                last_error=yahoo.last_error,
+            )
+            if yahoo is not None
+            else None
+        ),
     )
 
 

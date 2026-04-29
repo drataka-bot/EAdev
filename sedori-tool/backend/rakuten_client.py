@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 
 ENDPOINT = "https://app.rakuten.co.jp/services/api/IchibaItem/Search/20170706"
 SLEEP_SEC = 1.5
+COOLDOWN_AFTER_429_SEC = 60.0
 TIMEOUT_SEC = 20.0
 
 
@@ -29,9 +30,32 @@ class RakutenClient:
         # 直近のリクエスト時刻 (monotonic)。再利用クライアントで連続実行時の
         # 間隔を担保する。
         self._last_request_at: float = 0.0
+        # 429 を受けた後のクールダウン期限
+        self._cooldown_until: float = 0.0
+        # 状態カウンタ (UI 表示用、reset_stats() でリセット可)
+        self.success_count: int = 0
+        self.error_count: int = 0
+        self.rate_limited_count: int = 0
+        self.last_error: Optional[str] = None
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    def reset_stats(self) -> None:
+        self.success_count = 0
+        self.error_count = 0
+        self.rate_limited_count = 0
+        self.last_error = None
+
+    def _in_cooldown(self) -> bool:
+        return time.monotonic() < self._cooldown_until
+
+    async def _await_cooldown(self) -> None:
+        remaining = self._cooldown_until - time.monotonic()
+        if remaining > 0:
+            log.info("Rakuten: クールダウン中。あと %.0fs 待機します。", remaining)
+            await asyncio.sleep(remaining + 0.5)
+            self._cooldown_until = 0.0
 
     async def search(
         self,
@@ -95,32 +119,37 @@ class RakutenClient:
 
         # 楽天 1 req/秒制限を守る:
         # - lock で同時呼び出しを直列化
+        # - クールダウン中なら満了まで待ってから送信
         # - 直近リクエストから SLEEP_SEC 経っていない場合は差分だけ待つ
-        # - 429 は 10 秒待って 1 回リトライ
+        # - 429 を受けたら COOLDOWN_AFTER_429_SEC のクールダウンを設定
         async with self._req_lock:
-            for attempt in range(2):
-                # 直近リクエストからの経過秒
-                gap = time.monotonic() - self._last_request_at
-                if gap < SLEEP_SEC:
-                    await asyncio.sleep(SLEEP_SEC - gap)
-                try:
-                    resp = await self._client.get(ENDPOINT, params=params)
-                except httpx.HTTPError as exc:
-                    log.warning("Rakuten search failed for %s: %s", keyword, exc)
-                    self._last_request_at = time.monotonic()
-                    return []
+            await self._await_cooldown()
+            gap = time.monotonic() - self._last_request_at
+            if gap < SLEEP_SEC:
+                await asyncio.sleep(SLEEP_SEC - gap)
+            try:
+                resp = await self._client.get(ENDPOINT, params=params)
+            except httpx.HTTPError as exc:
+                log.warning("Rakuten search failed for %s: %s", keyword[:60], exc)
                 self._last_request_at = time.monotonic()
-                if resp.status_code == 429 and attempt == 0:
-                    log.warning(
-                        "Rakuten 429 for %s; sleeping 10s and retrying once.",
-                        keyword[:60],
-                    )
-                    await asyncio.sleep(10.0)
-                    continue
-                break
+                self.error_count += 1
+                self.last_error = f"network: {type(exc).__name__}"
+                return []
+            self._last_request_at = time.monotonic()
+            if resp.status_code == 429:
+                self._cooldown_until = time.monotonic() + COOLDOWN_AFTER_429_SEC
+                self.rate_limited_count += 1
+                self.last_error = "429: レート制限超過"
+                log.warning(
+                    "Rakuten 429 for %s; cooldown %.0fs.",
+                    keyword[:60],
+                    COOLDOWN_AFTER_429_SEC,
+                )
+                return []
         if resp.status_code != 200:
             body_short = resp.text[:300]
             if "applicationId" in body_short:
+                self.last_error = "applicationId が無効 (UUID を入れていませんか?)"
                 log.error(
                     "Rakuten %s for %s: %s\n"
                     "  → 楽天 applicationId は 20桁の数字です。UUID 形式の値を入れていませんか?\n"
@@ -130,13 +159,16 @@ class RakutenClient:
                     body_short,
                 )
             else:
+                self.last_error = f"HTTP {resp.status_code}"
                 log.warning(
                     "Rakuten %s for %s: %s",
                     resp.status_code,
                     keyword,
                     body_short,
                 )
+            self.error_count += 1
             return []
+        self.success_count += 1
         data = resp.json()
         items = data.get("Items") or []
         out: list[dict[str, Any]] = []

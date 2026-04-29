@@ -69,6 +69,13 @@ export interface ProductItem {
   error: string | null;
 }
 
+export interface SourceStatus {
+  success: number;
+  error: number;
+  rate_limited: number;
+  last_error: string | null;
+}
+
 export interface ResearchResponse {
   items: ProductItem[];
   total: number;
@@ -84,6 +91,8 @@ export interface ResearchResponse {
   };
   keepa_tokens_left?: number | null;
   keepa_refill_in_ms?: number | null;
+  rakuten_status?: SourceStatus | null;
+  yahoo_status?: SourceStatus | null;
 }
 
 export interface AppSettings {
