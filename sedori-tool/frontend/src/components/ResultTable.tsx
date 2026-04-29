@@ -25,7 +25,8 @@ type SortKey =
   | "fba_offer_count"
   | "price_avg_30d"
   | "price_max_all"
-  | "price_min_all";
+  | "price_min_all"
+  | "premium_rate";
 
 type SortDir = "asc" | "desc";
 
@@ -47,6 +48,13 @@ function yen(v: number | null | undefined): string {
 function num(v: number | null | undefined): string {
   if (v == null) return "-";
   return v.toLocaleString();
+}
+
+function premiumRate(item: ProductItem): number | null {
+  if (!item.list_price || item.list_price <= 0) return null;
+  const cur = item.current_price ?? item.lowest_new_price;
+  if (cur == null) return null;
+  return Math.round(((cur - item.list_price) / item.list_price) * 1000) / 10;
 }
 
 function sortValue(item: ProductItem, key: SortKey): number | string {
@@ -83,6 +91,8 @@ function sortValue(item: ProductItem, key: SortKey): number | string {
       return item.price_max_all ?? Number.MAX_SAFE_INTEGER;
     case "price_min_all":
       return item.price_min_all ?? Number.MAX_SAFE_INTEGER;
+    case "premium_rate":
+      return premiumRate(item) ?? Number.MIN_SAFE_INTEGER;
     case "rank_current":
       return item.rank_current ?? Number.MAX_SAFE_INTEGER;
     case "monthly_sales":
@@ -118,6 +128,8 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
   const [minSales30, setMinSales30] = useState<string>("");
   const [priceMin, setPriceMin] = useState<string>("");
   const [priceMax, setPriceMax] = useState<string>("");
+  const [premiumOnly, setPremiumOnly] = useState(false);
+  const [minPremiumPct, setMinPremiumPct] = useState<string>("10");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [pageSize, setPageSize] = useState<number>(20);
   const [page, setPage] = useState<number>(1);
@@ -227,6 +239,11 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
       const cur = item.current_price ?? item.lowest_new_price;
       if (pMin != null && (cur == null || cur < pMin)) return false;
       if (pMax != null && (cur == null || cur > pMax)) return false;
+      if (premiumOnly) {
+        const pr = premiumRate(item);
+        const minPR2 = toNumber(minPremiumPct) ?? 0;
+        if (pr == null || pr < minPR2) return false;
+      }
       if (kw) {
         const hay = [
           item.title,
@@ -270,6 +287,8 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
     priceMax,
     excludeAmazon,
     profitableOnly,
+    premiumOnly,
+    minPremiumPct,
     favoritesOnly,
     favorites,
     sortKey,
@@ -335,6 +354,8 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
     setPriceMax("");
     setExcludeAmazon(false);
     setProfitableOnly(false);
+    setPremiumOnly(false);
+    setMinPremiumPct("10");
   };
 
   // ----- フィルタプリセット (localStorage) -----
@@ -489,6 +510,30 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={() => setPremiumOnly((v) => !v)}
+            className={`px-3 py-1 border rounded text-sm ${
+              premiumOnly
+                ? "bg-pink-500/20 text-pink-300 border-pink-500/60"
+                : "bg-base-700 text-gray-300 border-base-500 hover:border-pink-500"
+            }`}
+            title="定価より高く売られている商品のみ"
+          >
+            🔥 プレ値モード{premiumOnly ? "(ON)" : ""}
+          </button>
+          {premiumOnly && (
+            <span className="inline-flex items-center gap-1 text-xs text-gray-300">
+              ≥
+              <input
+                type="number"
+                value={minPremiumPct}
+                onChange={(e) => setMinPremiumPct(e.target.value)}
+                className="w-14 bg-base-900 border border-base-500 rounded px-2 py-0.5 text-right"
+              />
+              %
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setFavoritesOnly((v) => !v)}
@@ -677,7 +722,7 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
               <th className="px-3 py-1" colSpan={1}>判定</th>
               <th className="px-3 py-1 text-left" colSpan={3}>商品情報</th>
               <th className="px-3 py-1 text-right" colSpan={3}>価格</th>
-              <th className="px-3 py-1 text-right" colSpan={4}>価格履歴</th>
+              <th className="px-3 py-1 text-right" colSpan={5}>価格履歴</th>
               <th className="px-3 py-1 text-right" colSpan={4}>仕入れ候補</th>
               <th className="px-3 py-1 text-right" colSpan={1}>仕入</th>
               <th className="px-3 py-1 text-right" colSpan={3}>利益</th>
@@ -721,6 +766,11 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 align="right"
               />
               <th className="px-3 py-2 text-right">変動率</th>
+              <Th
+                onClick={() => handleSort("premium_rate")}
+                label={`プレ値率${sortArrow("premium_rate")}`}
+                align="right"
+              />
               <Th
                 onClick={() => handleSort("rakuten_price")}
                 label={`楽天${sortArrow("rakuten_price")}`}
@@ -798,7 +848,7 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
           <tbody>
             {pageRows.length === 0 && (
               <tr>
-                <td colSpan={27} className="text-center py-10 text-gray-500">
+                <td colSpan={28} className="text-center py-10 text-gray-500">
                   データがありません
                 </td>
               </tr>
@@ -940,6 +990,9 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 <td className="px-3 py-2 text-right">
                   <ChangeRate value={item.price_change_30d} suffix="30d" />
                   <ChangeRate value={item.price_change_90d} suffix="90d" />
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <PremiumRateCell rate={premiumRate(item)} listPrice={item.list_price} />
                 </td>
                 <td className="px-3 py-2 text-right">
                   <OffersCell
@@ -1323,6 +1376,39 @@ function OffersCell({
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+function PremiumRateCell({
+  rate,
+  listPrice,
+}: {
+  rate: number | null;
+  listPrice: number | null;
+}) {
+  if (rate == null) {
+    return (
+      <div className="text-[11px] text-gray-600" title="定価未取得">
+        定価不明
+      </div>
+    );
+  }
+  const isPremium = rate > 0;
+  const cls = isPremium
+    ? rate >= 50
+      ? "text-pink-300 font-bold"
+      : "text-pink-400"
+    : "text-gray-400";
+  return (
+    <div className="text-right">
+      <div className={`text-sm ${cls}`}>
+        {isPremium ? "+" : ""}
+        {rate.toFixed(1)}%
+      </div>
+      {listPrice != null && (
+        <div className="text-[10px] text-gray-500">定価 ¥{listPrice.toLocaleString()}</div>
       )}
     </div>
   );

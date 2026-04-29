@@ -1,6 +1,7 @@
 import type { ProductItem } from "../types";
 
-const HEADERS: { key: keyof ProductItem | "score"; label: string }[] = [
+type ComputedKey = "premium_rate";
+const HEADERS: { key: keyof ProductItem | "score" | ComputedKey; label: string }[] = [
   { key: "score", label: "スコア" },
   { key: "input_code", label: "入力コード" },
   { key: "asin", label: "ASIN" },
@@ -26,6 +27,7 @@ const HEADERS: { key: keyof ProductItem | "score"; label: string }[] = [
   { key: "price_avg_90d", label: "90日平均価格" },
   { key: "price_change_30d", label: "30日変動率(%)" },
   { key: "price_change_90d", label: "90日変動率(%)" },
+  { key: "premium_rate", label: "プレ値率(%)" },
   { key: "rakuten_price", label: "楽天最安値" },
   { key: "rakuten_shop", label: "楽天ショップ" },
   { key: "rakuten_url", label: "楽天URL" },
@@ -85,10 +87,20 @@ function timestamp(): string {
   );
 }
 
+function computePremiumRate(item: ProductItem): number | null {
+  if (!item.list_price || item.list_price <= 0) return null;
+  const cur = item.current_price ?? item.lowest_new_price;
+  if (cur == null) return null;
+  return Math.round(((cur - item.list_price) / item.list_price) * 1000) / 10;
+}
+
 export function exportCsv(items: ProductItem[]): void {
   const lines = [HEADERS.map((h) => csvEscape(h.label)).join(",")];
   for (const item of items) {
-    const row = HEADERS.map((h) => csvEscape((item as any)[h.key]));
+    const row = HEADERS.map((h) => {
+      if (h.key === "premium_rate") return csvEscape(computePremiumRate(item));
+      return csvEscape((item as unknown as Record<string, unknown>)[h.key as string]);
+    });
     lines.push(row.join(","));
   }
   const csv = "﻿" + lines.join("\r\n");
