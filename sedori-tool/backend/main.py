@@ -530,13 +530,20 @@ async def research(req: ResearchRequest) -> ResearchResponse:
             failed += 1
             continue
 
-        rakuten_offers = rakuten_offers_map.get(asin) or []
-        yahoo_offers = yahoo_offers_map.get(asin) or []
-        # 仕入れ用の単一値は新品のみから最安を採用 (中古は混ぜない)
-        rk_new = next((o for o in rakuten_offers if o.get("condition") == "new"), None)
-        yh_new = next((o for o in yahoo_offers if o.get("condition") == "new"), None)
-        rk = rk_new or (rakuten_offers[0] if rakuten_offers else None)
-        yh = yh_new or (yahoo_offers[0] if yahoo_offers else None)
+        # 新品のみを仕入れ対象にする (中古は混ぜない)。
+        # 中古しかヒットしなかったソースは価格無し扱いで利益計算に使わない。
+        rakuten_offers = [
+            o
+            for o in (rakuten_offers_map.get(asin) or [])
+            if o.get("condition") == "new"
+        ]
+        yahoo_offers = [
+            o
+            for o in (yahoo_offers_map.get(asin) or [])
+            if o.get("condition") == "new"
+        ]
+        rk = rakuten_offers[0] if rakuten_offers else None
+        yh = yahoo_offers[0] if yahoo_offers else None
         bc = bic_results.get(asin)
         yd = yodobashi_results.get(asin)
 

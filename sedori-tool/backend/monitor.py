@@ -113,11 +113,9 @@ async def _fetch_rakuten_yahoo(
                 offers = await rakuten.search_multi(
                     jan=prod.get("jan"), title=prod.get("title"), hits=3
                 )
-                # 新品最安を優先
-                new_first = next(
-                    (o for o in offers if o.get("condition") == "new"), None
-                )
-                rakuten_top[asin] = new_first or (offers[0] if offers else None)
+                # 新品のみを採用 (中古は監視対象外)
+                new_offers = [o for o in offers if o.get("condition") == "new"]
+                rakuten_top[asin] = new_offers[0] if new_offers else None
             except Exception as exc:  # noqa: BLE001
                 log.warning("monitor Rakuten failed for %s: %s", asin, exc)
                 rakuten_top[asin] = None
@@ -130,10 +128,8 @@ async def _fetch_rakuten_yahoo(
                 offers = await yahoo.search_multi(
                     jan=prod.get("jan"), query=prod.get("title"), hits=3
                 )
-                new_first = next(
-                    (o for o in offers if o.get("condition") == "new"), None
-                )
-                yahoo_top[asin] = new_first or (offers[0] if offers else None)
+                new_offers = [o for o in offers if o.get("condition") == "new"]
+                yahoo_top[asin] = new_offers[0] if new_offers else None
             except Exception as exc:  # noqa: BLE001
                 log.warning("monitor Yahoo failed for %s: %s", asin, exc)
                 yahoo_top[asin] = None

@@ -73,21 +73,23 @@ class BicCameraClient:
         if not jan and not title:
             return None
 
-        # 1) 楽天 ビック公式店 (JAN 優先 → 商品名フォールバック)
+        # 1) 楽天 ビック公式店 (新品のみ、JAN 優先 → 商品名フォールバック)
         if self.rakuten:
-            r = await self.rakuten.search(
-                jan=jan, title=title, shop_code=RAKUTEN_BIC_SHOP
+            offers = await self.rakuten.search_multi(
+                jan=jan, title=title, shop_code=RAKUTEN_BIC_SHOP, hits=5
             )
-            if r and r.get("price"):
-                return {**r, "source": "rakuten"}
+            new_offers = [o for o in offers if o.get("condition") == "new"]
+            if new_offers:
+                return {**new_offers[0], "source": "rakuten"}
 
-        # 2) Yahoo ビック店 (JAN 優先 → 商品名フォールバック)
+        # 2) Yahoo ビック店 (新品のみ、JAN 優先 → 商品名フォールバック)
         if self.yahoo:
-            y = await self.yahoo.search(
-                jan=jan, query=title, seller_id=YAHOO_BIC_SELLER
+            offers = await self.yahoo.search_multi(
+                jan=jan, query=title, seller_id=YAHOO_BIC_SELLER, hits=5
             )
-            if y and y.get("price"):
-                return {**y, "source": "yahoo"}
+            new_offers = [o for o in offers if o.get("condition") == "new"]
+            if new_offers:
+                return {**new_offers[0], "source": "yahoo"}
 
         # 3) biccamera.com スクレイピング (オプトイン、JAN 必須)
         if (
