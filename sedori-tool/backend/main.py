@@ -141,7 +141,18 @@ class ProductItem(BaseModel):
     buy_box_price: Optional[int] = None
     fba_price: Optional[int] = None
     fbm_price: Optional[int] = None
+    list_price: Optional[int] = None
     fba_fee: Optional[int] = None
+    storage_fee: Optional[int] = None
+    image_url: Optional[str] = None
+    release_date: Optional[str] = None
+    variation_count: int = 0
+    price_avg_30d: Optional[int] = None
+    price_avg_90d: Optional[int] = None
+    price_max_all: Optional[int] = None
+    price_min_all: Optional[int] = None
+    price_change_30d: Optional[float] = None
+    price_change_90d: Optional[float] = None
     rank_current: Optional[int] = None
     rank_avg30: Optional[int] = None
     rank_avg90: Optional[int] = None
@@ -182,6 +193,7 @@ class ProductItem(BaseModel):
     purchase_price: Optional[int] = None
     profit: Optional[int] = None
     profit_rate: Optional[float] = None
+    monthly_profit: Optional[int] = None  # 利益額 × 月間推定販売数
     score: str = "-"
     error: Optional[str] = None
 
@@ -593,12 +605,21 @@ async def research(req: ResearchRequest) -> ResearchResponse:
             )
         )
 
+        # 月間予測利益 = 利益額 × 月間推定販売数
+        monthly_sales_val = product.get("monthly_sales") or 0
+        monthly_profit = (
+            int(score_result.profit * monthly_sales_val)
+            if score_result.profit is not None and monthly_sales_val > 0
+            else None
+        )
+
         items.append(
             ProductItem(
                 input_code=code,
                 purchase_price=purchase_price,
                 profit=score_result.profit,
                 profit_rate=score_result.profit_rate,
+                monthly_profit=monthly_profit,
                 score=score_result.grade,
                 rakuten_price=rakuten_price,
                 rakuten_url=rk.get("url") if rk else None,

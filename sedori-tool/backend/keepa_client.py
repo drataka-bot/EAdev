@@ -31,9 +31,26 @@ CSV_AMAZON = 0
 CSV_NEW = 1
 CSV_USED = 2
 CSV_SALES_RANK = 3
+CSV_LIST_PRICE = 4
 CSV_NEW_FBA = 10
 CSV_NEW_FBM_SHIPPING = 11
 CSV_BUY_BOX = 18
+
+# Keepa の時刻表記 (分単位 + epoch オフセット)
+KEEPA_EPOCH_OFFSET = 21564000  # 2011-01-01 00:00:00 UTC を分単位で表現
+
+
+def _keepa_minutes_to_iso(minutes: Any) -> Optional[str]:
+    """Keepa の時刻 (分単位、Keepa epoch = 2011-01-01) を ISO 日付文字列に。"""
+    if not isinstance(minutes, (int, float)) or minutes <= 0:
+        return None
+    try:
+        unix_seconds = (int(minutes) + KEEPA_EPOCH_OFFSET) * 60
+        from datetime import datetime, timezone
+
+        return datetime.fromtimestamp(unix_seconds, tz=timezone.utc).strftime("%Y-%m-%d")
+    except Exception:  # noqa: BLE001
+        return None
 
 
 class KeepaError(Exception):
@@ -307,6 +324,7 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
     buy_box_price = _price(_stat_at(stats, "current", CSV_BUY_BOX))
     fba_price = _price(_stat_at(stats, "current", CSV_NEW_FBA))
     fbm_price = _price(_stat_at(stats, "current", CSV_NEW_FBM_SHIPPING))
+    list_price = _price(_stat_at(stats, "current", CSV_LIST_PRICE))
 
     # Amazon ページで実際に表示される価格 (購入時に決まる価格):
     # Buy Box > Amazon 直売 > 新品最安 の優先順位で決定。
@@ -368,6 +386,66 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
     sales_30d = _sales("salesRankDrops30")
     sales_90d = _sales("salesRankDrops90")
 
+    # 価格平均 (30日 / 90日) ─ Buy Box → New → Amazon の順で代表値を採用
+    def _avg_price(key: str) -> Optional[int]:
+        for idx in (CSV_BUY_BOX, CSV_NEW, CSV_AMAZON):
+            v = _price(_stat_at(stats, key, idx))
+            if v is not None:
+                return v
+        return None
+
+    price_avg_30d = _avg_price("avg30")
+    price_avg_90d = _avg_price("avg90")
+
+    # 過去最高 / 最低価格 (Buy Box → New)。Keepa の min/max 配列は
+    # [time, price] のペア、または単一値で返ることがあるので両方扱う。
+    def _stat_min_max_value(key: str) -> Optional[int]:
+        arr = stats.get(key)
+        if not isinstance(arr, list):
+            return None
+        for idx in (CSV_BUY_BOX, CSV_NEW, CSV_AMAZON):
+            if idx >= len(arr):
+                continue
+            entry = arr[idx]
+            if isinstance(entry, list) and len(entry) >= 2:
+                v = entry[1]
+            else:
+                v = entry
+            p = _price(v)
+            if p is not None:
+                return p
+        return None
+
+    price_max_all = _stat_min_max_value("max")
+    price_min_all = _stat_min_max_value("min")
+
+    # 価格変動率 (現在 vs 平均、%)
+    def _change_rate(current: Optional[int], avg: Optional[int]) -> Optional[float]:
+        if current is None or avg is None or avg <= 0:
+            return None
+        return round((current - avg) / avg * 100, 1)
+
+    price_change_30d = _change_rate(buy_box_price or new_price, price_avg_30d)
+    price_change_90d = _change_rate(buy_box_price or new_price, price_avg_90d)
+
+    # 商品画像 URL (Keepa imagesCSV 先頭ファイル → Amazon CDN)
+    images_csv = product.get("imagesCSV") or ""
+    image_url: Optional[str] = None
+    if isinstance(images_csv, str) and images_csv.strip():
+        first = images_csv.split(",")[0].strip()
+        if first:
+            image_url = f"https://m.media-amazon.com/images/I/{first}"
+
+    # 発売日 (Keepa minutes → ISO 日付)
+    release_date = _keepa_minutes_to_iso(product.get("releaseDate"))
+
+    # バリエーション数
+    variations = product.get("variations") or []
+    variation_count = len(variations) if isinstance(variations, list) else 0
+
+    # 月間保管料
+    storage_fee = _price(fba_fees.get("storageFee"))
+
     # JAN/EAN を抽出 (楽天/Yahoo 検索用)。eanList が無い商品もあるので
     # upcList / gtinList もフォールバックで見る。
     jan: Optional[str] = None
@@ -404,7 +482,18 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
         "buy_box_price": buy_box_price,
         "fba_price": fba_price,
         "fbm_price": fbm_price,
+        "list_price": list_price,
         "fba_fee": fba_fee,
+        "storage_fee": storage_fee,
+        "image_url": image_url,
+        "release_date": release_date,
+        "variation_count": variation_count,
+        "price_avg_30d": price_avg_30d,
+        "price_avg_90d": price_avg_90d,
+        "price_max_all": price_max_all,
+        "price_min_all": price_min_all,
+        "price_change_30d": price_change_30d,
+        "price_change_90d": price_change_90d,
         "rank_current": _rank(rank_current),
         "rank_avg30": _rank(rank_avg30),
         "rank_avg90": _rank(rank_avg90),

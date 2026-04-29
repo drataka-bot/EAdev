@@ -27,7 +27,18 @@ export interface ProductItem {
   buy_box_price: number | null;
   fba_price: number | null;
   fbm_price: number | null;
+  list_price: number | null;
   fba_fee: number | null;
+  storage_fee: number | null;
+  image_url: string | null;
+  release_date: string | null;
+  variation_count: number;
+  price_avg_30d: number | null;
+  price_avg_90d: number | null;
+  price_max_all: number | null;
+  price_min_all: number | null;
+  price_change_30d: number | null;
+  price_change_90d: number | null;
   rank_current: number | null;
   rank_avg30: number | null;
   rank_avg90: number | null;
@@ -65,6 +76,7 @@ export interface ProductItem {
   purchase_price: number | null;
   profit: number | null;
   profit_rate: number | null;
+  monthly_profit: number | null;
   score: ScoreGrade | string;
   error: string | null;
 }
