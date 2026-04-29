@@ -263,6 +263,8 @@ function App() {
           <WatchlistPanel
             webhookUrl={settings.discordWebhookUrl}
             keepaApiKey={settings.apiKey}
+            rakutenAppId={settings.rakutenAppId}
+            yahooClientId={settings.yahooClientId}
           />
         )}
       </main>

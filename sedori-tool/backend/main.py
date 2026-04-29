@@ -47,8 +47,8 @@ ENABLE_SCRAPING_ENV = os.getenv("ENABLE_SCRAPING", "").strip().lower() in (
 )
 DISCORD_WEBHOOK_ENV = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
 WATCHLIST_INTERVAL_SEC = int(os.getenv("WATCHLIST_INTERVAL_SEC", "900"))
-# UI から設定された Webhook URL は in-memory で保持 (複数台運用は想定外)
-_runtime_webhook: dict[str, str] = {}
+# UI から設定された Webhook URL や API キーは in-memory に保持
+_runtime_config: dict[str, str] = {}
 CORS_ORIGINS = [
     o.strip()
     for o in os.getenv("BACKEND_CORS_ORIGINS", "http://localhost:5173").split(",")
@@ -59,13 +59,21 @@ ASIN_RE = re.compile(r"^[A-Z0-9]{10}$")
 JAN_RE = re.compile(r"^\d{8}(\d{5})?$")  # 8 or 13 桁
 
 def _resolve_webhook() -> str:
-    return DISCORD_WEBHOOK_ENV or _runtime_webhook.get("url", "")
+    return DISCORD_WEBHOOK_ENV or _runtime_config.get("url", "")
 
 
 def _resolve_keepa_for_monitor() -> str:
     """監視ジョブ用の Keepa キー解決。.env か /api/watchlist/config で渡された値。"""
     env = _resolve(KEEPA_API_KEY_ENV, None)
-    return env or _runtime_webhook.get("keepa", "")
+    return env or _runtime_config.get("keepa", "")
+
+
+def _resolve_rakuten_for_monitor() -> str:
+    return _resolve(RAKUTEN_APP_ID_ENV, None) or _runtime_config.get("rakuten", "")
+
+
+def _resolve_yahoo_for_monitor() -> str:
+    return _resolve(YAHOO_CLIENT_ID_ENV, None) or _runtime_config.get("yahoo", "")
 
 
 @asynccontextmanager
@@ -75,6 +83,8 @@ async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
         monitor.run_loop(
             get_api_key=_resolve_keepa_for_monitor,
             get_webhook=_resolve_webhook,
+            get_rakuten_id=_resolve_rakuten_for_monitor,
+            get_yahoo_id=_resolve_yahoo_for_monitor,
             interval_sec=WATCHLIST_INTERVAL_SEC,
             domain=KEEPA_DOMAIN,
         )
@@ -628,6 +638,8 @@ class WatchlistItemIn(BaseModel):
 class WatchlistConfigIn(BaseModel):
     discord_webhook_url: Optional[str] = None
     keepa_api_key: Optional[str] = None
+    rakuten_app_id: Optional[str] = None
+    yahoo_client_id: Optional[str] = None
 
 
 @app.get("/api/watchlist")
@@ -637,6 +649,8 @@ async def watchlist_list() -> dict[str, Any]:
         "interval_sec": WATCHLIST_INTERVAL_SEC,
         "webhook_configured": bool(_resolve_webhook()),
         "monitor_keepa_configured": bool(_resolve_keepa_for_monitor()),
+        "monitor_rakuten_configured": bool(_resolve_rakuten_for_monitor()),
+        "monitor_yahoo_configured": bool(_resolve_yahoo_for_monitor()),
     }
 
 
@@ -673,14 +687,20 @@ async def watchlist_alerts(limit: int = 50) -> dict[str, Any]:
 
 @app.post("/api/watchlist/config")
 async def watchlist_config(req: WatchlistConfigIn) -> dict[str, Any]:
-    """UI から Discord Webhook URL / Keepa キー (監視用) を保存する。"""
+    """UI から Discord Webhook URL / 各 API キー (監視用) を保存する。"""
     if req.discord_webhook_url is not None:
-        _runtime_webhook["url"] = req.discord_webhook_url.strip()
+        _runtime_config["url"] = req.discord_webhook_url.strip()
     if req.keepa_api_key is not None:
-        _runtime_webhook["keepa"] = req.keepa_api_key.strip()
+        _runtime_config["keepa"] = req.keepa_api_key.strip()
+    if req.rakuten_app_id is not None:
+        _runtime_config["rakuten"] = req.rakuten_app_id.strip()
+    if req.yahoo_client_id is not None:
+        _runtime_config["yahoo"] = req.yahoo_client_id.strip()
     return {
         "webhook_configured": bool(_resolve_webhook()),
         "monitor_keepa_configured": bool(_resolve_keepa_for_monitor()),
+        "monitor_rakuten_configured": bool(_resolve_rakuten_for_monitor()),
+        "monitor_yahoo_configured": bool(_resolve_yahoo_for_monitor()),
     }
 
 
@@ -693,5 +713,11 @@ async def watchlist_check_now() -> dict[str, Any]:
             status_code=400,
             detail="監視用の Keepa API キーが設定されていません (/api/watchlist/config か .env で指定)",
         )
-    fired = await monitor.check_once(api_key, _resolve_webhook(), domain=KEEPA_DOMAIN)
+    fired = await monitor.check_once(
+        api_key,
+        _resolve_webhook(),
+        rakuten_id=_resolve_rakuten_for_monitor(),
+        yahoo_id=_resolve_yahoo_for_monitor(),
+        domain=KEEPA_DOMAIN,
+    )
     return {"fired": fired}

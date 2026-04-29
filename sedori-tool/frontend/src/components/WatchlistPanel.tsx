@@ -4,6 +4,8 @@ import type { WatchAlert, WatchItem, WatchlistResponse } from "../types";
 interface Props {
   webhookUrl: string;
   keepaApiKey: string;
+  rakutenAppId: string;
+  yahooClientId: string;
 }
 
 function formatTime(ts: number | null): string {
@@ -13,12 +15,19 @@ function formatTime(ts: number | null): string {
   return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-export function WatchlistPanel({ webhookUrl, keepaApiKey }: Props) {
+export function WatchlistPanel({
+  webhookUrl,
+  keepaApiKey,
+  rakutenAppId,
+  yahooClientId,
+}: Props) {
   const [items, setItems] = useState<WatchItem[]>([]);
   const [alerts, setAlerts] = useState<WatchAlert[]>([]);
   const [intervalSec, setIntervalSec] = useState<number>(900);
   const [webhookOk, setWebhookOk] = useState(false);
   const [keepaOk, setKeepaOk] = useState(false);
+  const [rakutenOk, setRakutenOk] = useState(false);
+  const [yahooOk, setYahooOk] = useState(false);
 
   const [asin, setAsin] = useState("");
   const [note, setNote] = useState("");
@@ -37,10 +46,12 @@ export function WatchlistPanel({ webhookUrl, keepaApiKey }: Props) {
     setIntervalSec(w.interval_sec);
     setWebhookOk(w.webhook_configured);
     setKeepaOk(w.monitor_keepa_configured);
+    setRakutenOk(w.monitor_rakuten_configured);
+    setYahooOk(w.monitor_yahoo_configured);
     setAlerts(a.alerts || []);
   }, []);
 
-  // バックエンドへ Discord webhook URL / Keepa key を送る (UI 設定→監視ジョブへ)
+  // 設定 → 監視ジョブへキー類をプッシュ
   const pushConfig = useCallback(async () => {
     await fetch("/api/watchlist/config", {
       method: "POST",
@@ -48,9 +59,11 @@ export function WatchlistPanel({ webhookUrl, keepaApiKey }: Props) {
       body: JSON.stringify({
         discord_webhook_url: webhookUrl || null,
         keepa_api_key: keepaApiKey || null,
+        rakuten_app_id: rakutenAppId || null,
+        yahoo_client_id: yahooClientId || null,
       }),
     });
-  }, [webhookUrl, keepaApiKey]);
+  }, [webhookUrl, keepaApiKey, rakutenAppId, yahooClientId]);
 
   useEffect(() => {
     pushConfig().then(reload);
@@ -125,10 +138,12 @@ export function WatchlistPanel({ webhookUrl, keepaApiKey }: Props) {
           <span className="text-accent font-bold">
             {Math.round(intervalSec / 60)} 分
           </span>
-          <Pill on={keepaOk} label={keepaOk ? "Keepa 設定済" : "Keepa キー未設定"} />
+          <Pill on={keepaOk} label={keepaOk ? "Keepa 設定済" : "Keepa 未設定"} />
+          <Pill on={rakutenOk} label={rakutenOk ? "楽天 設定済" : "楽天 未設定"} />
+          <Pill on={yahooOk} label={yahooOk ? "Yahoo 設定済" : "Yahoo 未設定"} />
           <Pill
             on={webhookOk}
-            label={webhookOk ? "Discord 設定済" : "Webhook URL 未設定"}
+            label={webhookOk ? "Discord 設定済" : "Webhook 未設定"}
           />
           <span className="ml-auto text-gray-400">
             登録 <span className="text-accent font-bold">{items.length}</span> 件

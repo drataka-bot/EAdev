@@ -125,6 +125,8 @@ export interface WatchlistResponse {
   interval_sec: number;
   webhook_configured: boolean;
   monitor_keepa_configured: boolean;
+  monitor_rakuten_configured: boolean;
+  monitor_yahoo_configured: boolean;
 }
 
 export interface AdvancedFilter {
