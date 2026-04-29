@@ -9,3 +9,4 @@ build/
 *.log
 .vite/
 tsconfig.tsbuildinfo
+watchlist.db
