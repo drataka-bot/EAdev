@@ -111,6 +111,12 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
   const [maxFbaOffers, setMaxFbaOffers] = useState<string>("");
   const [excludeAmazon, setExcludeAmazon] = useState(false);
   const [profitableOnly, setProfitableOnly] = useState(false);
+  const [minProfit, setMinProfit] = useState<string>("");
+  const [minMonthlyProfit, setMinMonthlyProfit] = useState<string>("");
+  const [maxRank, setMaxRank] = useState<string>("");
+  const [minSales30, setMinSales30] = useState<string>("");
+  const [priceMin, setPriceMin] = useState<string>("");
+  const [priceMax, setPriceMax] = useState<string>("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [pageSize, setPageSize] = useState<number>(20);
   const [page, setPage] = useState<number>(1);
@@ -127,6 +133,12 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
     const minMon = toNumber(minMonthly);
     const maxNew = toNumber(maxNewOffers);
     const maxFba = toNumber(maxFbaOffers);
+    const minP = toNumber(minProfit);
+    const minMP = toNumber(minMonthlyProfit);
+    const maxR = toNumber(maxRank);
+    const minS30 = toNumber(minSales30);
+    const pMin = toNumber(priceMin);
+    const pMax = toNumber(priceMax);
 
     let rows = items.filter((item) => {
       if (gradeFilter.size > 0 && !gradeFilter.has(item.score)) return false;
@@ -151,6 +163,22 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
         item.fba_offer_count > maxFba
       )
         return false;
+      if (minP != null && (item.profit == null || item.profit < minP)) return false;
+      if (
+        minMP != null &&
+        (item.monthly_profit == null || item.monthly_profit < minMP)
+      )
+        return false;
+      if (
+        maxR != null &&
+        (item.rank_current == null || item.rank_current > maxR)
+      )
+        return false;
+      if (minS30 != null && (item.sales_30d == null || item.sales_30d < minS30))
+        return false;
+      const cur = item.current_price ?? item.lowest_new_price;
+      if (pMin != null && (cur == null || cur < pMin)) return false;
+      if (pMax != null && (cur == null || cur > pMax)) return false;
       if (kw) {
         const hay = [
           item.title,
@@ -186,6 +214,12 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
     minMonthly,
     maxNewOffers,
     maxFbaOffers,
+    minProfit,
+    minMonthlyProfit,
+    maxRank,
+    minSales30,
+    priceMin,
+    priceMax,
     excludeAmazon,
     profitableOnly,
     sortKey,
@@ -243,8 +277,102 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
     setMinMonthly("");
     setMaxNewOffers("");
     setMaxFbaOffers("");
+    setMinProfit("");
+    setMinMonthlyProfit("");
+    setMaxRank("");
+    setMinSales30("");
+    setPriceMin("");
+    setPriceMax("");
     setExcludeAmazon(false);
     setProfitableOnly(false);
+  };
+
+  // ----- フィルタプリセット (localStorage) -----
+  type Preset = {
+    name: string;
+    grades: string[];
+    sizes: string[];
+    keyword: string;
+    minProfitRate: string;
+    minMonthly: string;
+    maxNewOffers: string;
+    maxFbaOffers: string;
+    minProfit: string;
+    minMonthlyProfit: string;
+    maxRank: string;
+    minSales30: string;
+    priceMin: string;
+    priceMax: string;
+    excludeAmazon: boolean;
+    profitableOnly: boolean;
+  };
+  const PRESET_KEY = "sedori_filter_presets_v1";
+  const [presets, setPresets] = useState<Preset[]>(() => {
+    try {
+      const raw = localStorage.getItem(PRESET_KEY);
+      return raw ? (JSON.parse(raw) as Preset[]) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const persistPresets = (next: Preset[]) => {
+    setPresets(next);
+    try {
+      localStorage.setItem(PRESET_KEY, JSON.stringify(next));
+    } catch {
+      // noop
+    }
+  };
+
+  const savePreset = () => {
+    const name = prompt("プリセット名を入力してください");
+    if (!name || !name.trim()) return;
+    const preset: Preset = {
+      name: name.trim(),
+      grades: [...gradeFilter],
+      sizes: [...sizeFilter],
+      keyword,
+      minProfitRate,
+      minMonthly,
+      maxNewOffers,
+      maxFbaOffers,
+      minProfit,
+      minMonthlyProfit,
+      maxRank,
+      minSales30,
+      priceMin,
+      priceMax,
+      excludeAmazon,
+      profitableOnly,
+    };
+    const next = [...presets.filter((p) => p.name !== preset.name), preset];
+    persistPresets(next);
+  };
+
+  const loadPreset = (name: string) => {
+    const p = presets.find((x) => x.name === name);
+    if (!p) return;
+    setGradeFilter(new Set(p.grades));
+    setSizeFilter(new Set(p.sizes));
+    setKeyword(p.keyword);
+    setMinProfitRate(p.minProfitRate);
+    setMinMonthly(p.minMonthly);
+    setMaxNewOffers(p.maxNewOffers);
+    setMaxFbaOffers(p.maxFbaOffers);
+    setMinProfit(p.minProfit);
+    setMinMonthlyProfit(p.minMonthlyProfit);
+    setMaxRank(p.maxRank);
+    setMinSales30(p.minSales30);
+    setPriceMin(p.priceMin);
+    setPriceMax(p.priceMax);
+    setExcludeAmazon(p.excludeAmazon);
+    setProfitableOnly(p.profitableOnly);
+  };
+
+  const deletePreset = (name: string) => {
+    if (!confirm(`プリセット「${name}」を削除しますか?`)) return;
+    persistPresets(presets.filter((p) => p.name !== name));
   };
 
   return (
@@ -322,9 +450,48 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
         </div>
       </div>
 
-      {/* --- 詳細条件 (ミリオンサーチ風) --- */}
+      {/* --- 詳細条件 --- */}
       {advancedOpen && (
-        <div className="bg-base-800/80 border border-base-500 rounded p-3 mb-4 grid grid-cols-4 gap-3 text-xs">
+        <div className="bg-base-800/80 border border-base-500 rounded p-3 mb-4 space-y-3 text-xs">
+          {/* プリセット行 */}
+          <div className="flex items-center gap-2 flex-wrap pb-2 border-b border-base-600">
+            <span className="text-gray-400">プリセット:</span>
+            {presets.length === 0 ? (
+              <span className="text-gray-600">未保存</span>
+            ) : (
+              presets.map((p) => (
+                <span
+                  key={p.name}
+                  className="inline-flex items-center bg-base-700 border border-base-500 rounded overflow-hidden"
+                >
+                  <button
+                    type="button"
+                    onClick={() => loadPreset(p.name)}
+                    className="px-2 py-0.5 hover:bg-base-600 text-gray-200"
+                  >
+                    {p.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deletePreset(p.name)}
+                    className="px-1.5 py-0.5 hover:bg-red-700 text-gray-500 text-[10px]"
+                    title="削除"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))
+            )}
+            <button
+              type="button"
+              onClick={savePreset}
+              className="ml-auto px-2 py-1 bg-accent hover:bg-accent-dark text-black font-bold rounded"
+            >
+              現在の条件を保存
+            </button>
+          </div>
+
+          <div className="grid grid-cols-4 gap-3">
           <NumberField
             label="最小利益率 (%)"
             value={minProfitRate}
@@ -332,10 +499,46 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
             placeholder="例: 15"
           />
           <NumberField
+            label="最小利益額 (¥)"
+            value={minProfit}
+            onChange={setMinProfit}
+            placeholder="例: 500"
+          />
+          <NumberField
+            label="最小月間予測利益 (¥)"
+            value={minMonthlyProfit}
+            onChange={setMinMonthlyProfit}
+            placeholder="例: 5000"
+          />
+          <NumberField
             label="最小月間販売数"
             value={minMonthly}
             onChange={setMinMonthly}
             placeholder="例: 10"
+          />
+          <NumberField
+            label="最小30日販売数"
+            value={minSales30}
+            onChange={setMinSales30}
+            placeholder="例: 5"
+          />
+          <NumberField
+            label="最大ランキング (位以内)"
+            value={maxRank}
+            onChange={setMaxRank}
+            placeholder="例: 30000"
+          />
+          <NumberField
+            label="現在価格 ≥ (¥)"
+            value={priceMin}
+            onChange={setPriceMin}
+            placeholder="例: 1000"
+          />
+          <NumberField
+            label="現在価格 ≤ (¥)"
+            value={priceMax}
+            onChange={setPriceMax}
+            placeholder="例: 30000"
           />
           <NumberField
             label="最大新品出品者数"
@@ -389,6 +592,7 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
             />
             黒字のみ表示
           </label>
+          </div>
         </div>
       )}
 
