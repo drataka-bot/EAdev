@@ -88,6 +88,7 @@ async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
             await task
         except asyncio.CancelledError:
             pass
+        await _close_singletons()
 
 
 app = FastAPI(title="電脳せどりリサーチツール", version="1.2.0", lifespan=lifespan)
@@ -212,6 +213,71 @@ def _classify(code: str) -> str:
     return "invalid"
 
 
+# ---------------------------------------------------------------------------
+# Persistent client singletons
+# ---------------------------------------------------------------------------
+# 連続実行で 429 やトークン枯渇の状態を引き継ぐためにクライアントは
+# モジュール変数として保持する。API キー変更時のみ再生成。
+_keepa_singleton: Optional[KeepaClient] = None
+_rakuten_singleton: Optional[RakutenClient] = None
+_yahoo_singleton: Optional[YahooClient] = None
+
+
+async def _get_keepa(api_key: str) -> KeepaClient:
+    global _keepa_singleton
+    if _keepa_singleton is None or _keepa_singleton.api_key != api_key:
+        if _keepa_singleton is not None:
+            try:
+                await _keepa_singleton.close()
+            except Exception:  # noqa: BLE001
+                pass
+        _keepa_singleton = KeepaClient(
+            api_key=api_key,
+            domain=KEEPA_DOMAIN,
+            offers=KEEPA_OFFERS,
+            batch_size=KEEPA_BATCH_SIZE,
+            batch_sleep_sec=KEEPA_BATCH_SLEEP_SEC,
+        )
+    return _keepa_singleton
+
+
+async def _get_rakuten(app_id: str) -> Optional[RakutenClient]:
+    global _rakuten_singleton
+    if not app_id:
+        return None
+    if _rakuten_singleton is None or _rakuten_singleton.app_id != app_id:
+        if _rakuten_singleton is not None:
+            try:
+                await _rakuten_singleton.close()
+            except Exception:  # noqa: BLE001
+                pass
+        _rakuten_singleton = RakutenClient(app_id)
+    return _rakuten_singleton
+
+
+async def _get_yahoo(client_id: str) -> Optional[YahooClient]:
+    global _yahoo_singleton
+    if not client_id:
+        return None
+    if _yahoo_singleton is None or _yahoo_singleton.client_id != client_id:
+        if _yahoo_singleton is not None:
+            try:
+                await _yahoo_singleton.close()
+            except Exception:  # noqa: BLE001
+                pass
+        _yahoo_singleton = YahooClient(client_id)
+    return _yahoo_singleton
+
+
+async def _close_singletons() -> None:
+    for c in (_keepa_singleton, _rakuten_singleton, _yahoo_singleton):
+        if c is not None:
+            try:
+                await c.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def _resolve(env_val: str, supplied: Optional[str]) -> str:
     """API キーを解決。優先順位は UI 入力 > .env。
 
@@ -309,13 +375,7 @@ async def research(req: ResearchRequest) -> ResearchResponse:
 
     # ----- Keepa: JAN -> ASIN, 商品取得 -----
     try:
-        keepa = KeepaClient(
-            api_key=keepa_key,
-            domain=KEEPA_DOMAIN,
-            offers=KEEPA_OFFERS,
-            batch_size=KEEPA_BATCH_SIZE,
-            batch_sleep_sec=KEEPA_BATCH_SLEEP_SEC,
-        )
+        keepa = await _get_keepa(keepa_key)
     except KeepaError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -323,7 +383,11 @@ async def research(req: ResearchRequest) -> ResearchResponse:
     asin_to_product: dict[str, dict] = {}
     try:
         if jan_targets:
-            jan_map = await keepa.jans_to_asins(jan_targets)
+            try:
+                jan_map = await keepa.jans_to_asins(jan_targets)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Keepa jan_to_asin batch failed: %s", exc)
+                jan_map = {jan: None for jan in jan_targets}
             for jan, asin in jan_map.items():
                 input_to_asin[jan] = asin
                 if asin and asin not in seen:
@@ -332,13 +396,17 @@ async def research(req: ResearchRequest) -> ResearchResponse:
         for asin in list(asin_targets):
             input_to_asin.setdefault(asin, asin)
 
-        async for batch_products, _processed in keepa.fetch_products(asin_targets):
-            for p in batch_products:
-                a = p.get("asin")
-                if a:
-                    asin_to_product[a] = normalize_product(p)
-    finally:
-        await keepa.close()
+        try:
+            async for batch_products, _processed in keepa.fetch_products(asin_targets):
+                for p in batch_products:
+                    a = p.get("asin")
+                    if a:
+                        asin_to_product[a] = normalize_product(p)
+        except Exception as exc:  # noqa: BLE001
+            # 致命的にせず、取れた分だけで先に進む
+            log.warning("Keepa fetch_products partial failure: %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Keepa unexpected error: %s", exc)
 
     # ----- 楽天 / Yahoo / ビック / ヨドバシ: 並行取得 -----
     rakuten_offers_map: dict[str, list[dict[str, Any]]] = {}
@@ -346,8 +414,8 @@ async def research(req: ResearchRequest) -> ResearchResponse:
     bic_results: dict[str, Optional[dict[str, Any]]] = {}
     yodobashi_results: dict[str, Optional[dict[str, Any]]] = {}
 
-    rakuten = RakutenClient(rakuten_id) if rakuten_id else None
-    yahoo = YahooClient(yahoo_id) if yahoo_id else None
+    rakuten = await _get_rakuten(rakuten_id)
+    yahoo = await _get_yahoo(yahoo_id)
     # Bic 用にも同じインスタンスを共有 (Rakuten 1 req/sec 制限を守るため)
     bic = BicCameraClient(
         rakuten=rakuten,
@@ -365,39 +433,58 @@ async def research(req: ResearchRequest) -> ResearchResponse:
                 title = prod.get("title")
                 if not jan and not title:
                     continue
-                rakuten_offers_map[asin] = await rakuten.search_multi(
-                    jan=jan, title=title, hits=5
-                )
-                await asyncio.sleep(0)
+                try:
+                    rakuten_offers_map[asin] = await rakuten.search_multi(
+                        jan=jan, title=title, hits=5
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Rakuten failed for %s: %s", asin, exc)
+                    rakuten_offers_map[asin] = []
 
         async def run_yahoo() -> None:
             if not yahoo:
                 return
             for asin, prod in asin_to_product.items():
-                jan = prod.get("jan")
-                title = prod.get("title")
-                yahoo_offers_map[asin] = await yahoo.search_multi(
-                    jan=jan, query=title, hits=5
-                )
+                try:
+                    yahoo_offers_map[asin] = await yahoo.search_multi(
+                        jan=prod.get("jan"), query=prod.get("title"), hits=5
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Yahoo failed for %s: %s", asin, exc)
+                    yahoo_offers_map[asin] = []
 
         async def run_bic() -> None:
             for asin, prod in asin_to_product.items():
-                bic_results[asin] = await bic.search(
-                    jan=prod.get("jan"), title=prod.get("title")
-                )
+                try:
+                    bic_results[asin] = await bic.search(
+                        jan=prod.get("jan"), title=prod.get("title")
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Bic failed for %s: %s", asin, exc)
+                    bic_results[asin] = None
 
         async def run_yodobashi() -> None:
             if not enable_scraping:
                 return
             for asin, prod in asin_to_product.items():
-                yodobashi_results[asin] = await yodobashi.search(jan=prod.get("jan"))
+                try:
+                    yodobashi_results[asin] = await yodobashi.search(
+                        jan=prod.get("jan")
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Yodobashi failed for %s: %s", asin, exc)
+                    yodobashi_results[asin] = None
 
-        await asyncio.gather(run_rakuten(), run_yahoo(), run_bic(), run_yodobashi())
+        # return_exceptions=True で 1 つ落ちても他を完走させる
+        await asyncio.gather(
+            run_rakuten(),
+            run_yahoo(),
+            run_bic(),
+            run_yodobashi(),
+            return_exceptions=True,
+        )
     finally:
-        if rakuten:
-            await rakuten.close()
-        if yahoo:
-            await yahoo.close()
+        # シングルトン化しているので Rakuten/Yahoo/Keepa はクローズしない
         await bic.close()
         await yodobashi.close()
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Optional
 
 import httpx
@@ -25,6 +26,9 @@ class RakutenClient:
         self._client = httpx.AsyncClient(timeout=TIMEOUT_SEC)
         # 1 req/秒制限を守るため、複数コルーチンからの同時呼び出しを直列化
         self._req_lock = asyncio.Lock()
+        # 直近のリクエスト時刻 (monotonic)。再利用クライアントで連続実行時の
+        # 間隔を担保する。
+        self._last_request_at: float = 0.0
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -89,17 +93,23 @@ class RakutenClient:
         if shop_code:
             params["shopCode"] = shop_code
 
-        # 楽天は 1 req/秒の制限。lock で同時呼び出しを直列化し、
-        # リクエスト後の sleep で間隔を担保する。429 は 10 秒待って 1 回リトライ。
+        # 楽天 1 req/秒制限を守る:
+        # - lock で同時呼び出しを直列化
+        # - 直近リクエストから SLEEP_SEC 経っていない場合は差分だけ待つ
+        # - 429 は 10 秒待って 1 回リトライ
         async with self._req_lock:
             for attempt in range(2):
+                # 直近リクエストからの経過秒
+                gap = time.monotonic() - self._last_request_at
+                if gap < SLEEP_SEC:
+                    await asyncio.sleep(SLEEP_SEC - gap)
                 try:
                     resp = await self._client.get(ENDPOINT, params=params)
                 except httpx.HTTPError as exc:
                     log.warning("Rakuten search failed for %s: %s", keyword, exc)
-                    await asyncio.sleep(SLEEP_SEC)
+                    self._last_request_at = time.monotonic()
                     return []
-                await asyncio.sleep(SLEEP_SEC)
+                self._last_request_at = time.monotonic()
                 if resp.status_code == 429 and attempt == 0:
                     log.warning(
                         "Rakuten 429 for %s; sleeping 10s and retrying once.",
