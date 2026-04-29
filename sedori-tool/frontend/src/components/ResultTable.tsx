@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { OfferItem, ProductItem, ScoreGrade } from "../types";
+import { loadFavorites, toggleFavorite } from "../utils/favorites";
 import { ScoreBadge } from "./ScoreBadge";
 
 type SortKey =
@@ -120,6 +121,52 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [pageSize, setPageSize] = useState<number>(20);
   const [page, setPage] = useState<number>(1);
+  const [favorites, setFavorites] = useState<Set<string>>(() => loadFavorites());
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+
+  const handleToggleFavorite = (asin: string | null) => {
+    if (!asin) return;
+    setFavorites(toggleFavorite(asin));
+  };
+
+  const addAllToWatchlist = async () => {
+    const targets = items.filter((it) => it.asin && favorites.has(it.asin));
+    if (targets.length === 0) {
+      setBulkMsg("お気に入りがありません");
+      return;
+    }
+    if (!confirm(`お気に入り ${targets.length} 件をウォッチリストに登録しますか?`))
+      return;
+    setBulkBusy(true);
+    setBulkMsg(null);
+    let ok = 0;
+    let ng = 0;
+    for (const it of targets) {
+      try {
+        const resp = await fetch("/api/watchlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            asin: it.asin,
+            title: it.title,
+            image_url: it.image_url,
+            trigger_restock: true,
+            trigger_price_below: null,
+            trigger_rank_below: null,
+            enabled: true,
+          }),
+        });
+        if (resp.ok) ok += 1;
+        else ng += 1;
+      } catch {
+        ng += 1;
+      }
+    }
+    setBulkBusy(false);
+    setBulkMsg(`ウォッチリストへ登録: 成功 ${ok} 件 / 失敗 ${ng} 件`);
+  };
 
   const toNumber = (v: string): number | null => {
     if (v.trim() === "") return null;
@@ -141,6 +188,7 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
     const pMax = toNumber(priceMax);
 
     let rows = items.filter((item) => {
+      if (favoritesOnly && (!item.asin || !favorites.has(item.asin))) return false;
       if (gradeFilter.size > 0 && !gradeFilter.has(item.score)) return false;
       if (sizeFilter.size > 0) {
         const sc = item.size_category ?? "";
@@ -222,6 +270,8 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
     priceMax,
     excludeAmazon,
     profitableOnly,
+    favoritesOnly,
+    favorites,
     sortKey,
     sortDir,
   ]);
@@ -441,6 +491,26 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
           </select>
           <button
             type="button"
+            onClick={() => setFavoritesOnly((v) => !v)}
+            className={`px-3 py-1 border rounded text-sm ${
+              favoritesOnly
+                ? "bg-yellow-500/20 text-yellow-300 border-yellow-500/60"
+                : "bg-base-700 text-gray-300 border-base-500 hover:border-yellow-500"
+            }`}
+            title={`お気に入り ${favorites.size} 件`}
+          >
+            ★ お気に入り{favoritesOnly ? "のみ" : ""} ({favorites.size})
+          </button>
+          <button
+            type="button"
+            onClick={addAllToWatchlist}
+            disabled={bulkBusy || favorites.size === 0}
+            className="px-3 py-1 bg-base-600 hover:bg-base-500 disabled:opacity-50 border border-base-400 rounded text-sm text-gray-100"
+          >
+            {bulkBusy ? "登録中..." : "★を一括監視"}
+          </button>
+          <button
+            type="button"
             onClick={() => onExport(visible)}
             disabled={filteredCount === 0}
             className="px-3 py-1 bg-base-600 hover:bg-base-500 disabled:opacity-50 border border-base-400 rounded text-sm text-gray-100"
@@ -449,6 +519,9 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
           </button>
         </div>
       </div>
+      {bulkMsg && (
+        <div className="text-xs text-amber-300 mb-2">{bulkMsg}</div>
+      )}
 
       {/* --- 詳細条件 --- */}
       {advancedOpen && (
@@ -736,7 +809,26 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 className="border-t border-base-600 hover:bg-base-700/40"
               >
                 <td className="px-3 py-2">
-                  <ScoreBadge grade={item.score} />
+                  <div className="flex flex-col items-center gap-1">
+                    <ScoreBadge grade={item.score} />
+                    <button
+                      type="button"
+                      onClick={() => handleToggleFavorite(item.asin)}
+                      disabled={!item.asin}
+                      title={
+                        item.asin && favorites.has(item.asin)
+                          ? "お気に入りから外す"
+                          : "お気に入りに追加"
+                      }
+                      className={`text-base leading-none ${
+                        item.asin && favorites.has(item.asin)
+                          ? "text-yellow-400"
+                          : "text-gray-600 hover:text-yellow-300"
+                      }`}
+                    >
+                      {item.asin && favorites.has(item.asin) ? "★" : "☆"}
+                    </button>
+                  </div>
                 </td>
                 <td className="px-2 py-2">
                   {item.image_url ? (
