@@ -12,8 +12,9 @@ import re
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
+import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -348,6 +349,48 @@ async def health() -> dict[str, Any]:
         "keepa_offers": KEEPA_OFFERS,
         "keepa_batch_size": KEEPA_BATCH_SIZE,
     }
+
+
+@app.get("/api/keepa-graph/{asin}")
+async def keepa_graph(asin: str, width: int = 600, height: int = 200) -> Response:
+    """Keepa の価格履歴 PNG をバックエンド proxy。API キーをサーバー側に隠す。"""
+    asin = (asin or "").strip().upper()
+    if not ASIN_RE.match(asin):
+        raise HTTPException(status_code=400, detail="ASIN が不正です")
+    api_key = _resolve_keepa_for_monitor()
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Keepa API キーが未設定です。設定画面で保存してください。",
+        )
+    width = max(100, min(1200, width))
+    height = max(80, min(800, height))
+    url = (
+        "https://graph.keepa.com/pricehistory.png"
+        f"?key={api_key}&domain={KEEPA_DOMAIN}&asin={asin}"
+        f"&width={width}&height={height}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url)
+    except httpx.HTTPError as exc:
+        log.warning("Keepa graph fetch failed for %s: %s", asin, exc)
+        raise HTTPException(status_code=502, detail="upstream fetch failed") from exc
+    if resp.status_code != 200:
+        log.warning(
+            "Keepa graph %s for %s: %s",
+            resp.status_code,
+            asin,
+            resp.text[:200],
+        )
+        raise HTTPException(
+            status_code=resp.status_code, detail="keepa graph error"
+        )
+    return Response(
+        content=resp.content,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 @app.post("/api/score", response_model=ScoreResponse)

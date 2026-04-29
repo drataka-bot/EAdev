@@ -434,6 +434,9 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
     if isinstance(images_csv, str) and images_csv.strip():
         first = images_csv.split(",")[0].strip()
         if first:
+            # Keepa は商品によって拡張子無しで返すことがあるので補完
+            if "." not in first:
+                first = f"{first}.jpg"
             image_url = f"https://m.media-amazon.com/images/I/{first}"
 
     # 発売日 (Keepa minutes → ISO 日付)
@@ -462,11 +465,8 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
             break
 
     asin = product.get("asin")
-    keepa_graph_url = (
-        f"https://graph.keepa.com/pricehistory.png?asin={asin}&domain=5&width=600&height=200"
-        if asin
-        else None
-    )
+    # 価格履歴グラフは API キーが必要なのでバックエンド proxy 経由で取得する。
+    keepa_graph_url = f"/api/keepa-graph/{asin}" if asin else None
     return {
         "asin": asin,
         "jan": jan,
