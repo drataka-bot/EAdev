@@ -15,7 +15,7 @@ import httpx
 log = logging.getLogger(__name__)
 
 ENDPOINT = "https://app.rakuten.co.jp/services/api/IchibaItem/Search/20170706"
-SLEEP_SEC = 1.1
+SLEEP_SEC = 1.5
 TIMEOUT_SEC = 20.0
 
 
@@ -23,6 +23,8 @@ class RakutenClient:
     def __init__(self, app_id: str) -> None:
         self.app_id = app_id
         self._client = httpx.AsyncClient(timeout=TIMEOUT_SEC)
+        # 1 req/秒制限を守るため、複数コルーチンからの同時呼び出しを直列化
+        self._req_lock = asyncio.Lock()
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -87,18 +89,25 @@ class RakutenClient:
         if shop_code:
             params["shopCode"] = shop_code
 
-        # 楽天は連続リクエストで 429 を返すことがあるので 1 回だけ wait + retry
-        for attempt in range(2):
-            try:
-                resp = await self._client.get(ENDPOINT, params=params)
-            except httpx.HTTPError as exc:
-                log.warning("Rakuten search failed for %s: %s", keyword, exc)
-                return []
-            if resp.status_code == 429 and attempt == 0:
-                log.warning("Rakuten 429 for %s; sleeping 5s and retrying once.", keyword)
-                await asyncio.sleep(5.0)
-                continue
-            break
+        # 楽天は 1 req/秒の制限。lock で同時呼び出しを直列化し、
+        # リクエスト後の sleep で間隔を担保する。429 は 10 秒待って 1 回リトライ。
+        async with self._req_lock:
+            for attempt in range(2):
+                try:
+                    resp = await self._client.get(ENDPOINT, params=params)
+                except httpx.HTTPError as exc:
+                    log.warning("Rakuten search failed for %s: %s", keyword, exc)
+                    await asyncio.sleep(SLEEP_SEC)
+                    return []
+                await asyncio.sleep(SLEEP_SEC)
+                if resp.status_code == 429 and attempt == 0:
+                    log.warning(
+                        "Rakuten 429 for %s; sleeping 10s and retrying once.",
+                        keyword[:60],
+                    )
+                    await asyncio.sleep(10.0)
+                    continue
+                break
         if resp.status_code != 200:
             body_short = resp.text[:300]
             if "applicationId" in body_short:

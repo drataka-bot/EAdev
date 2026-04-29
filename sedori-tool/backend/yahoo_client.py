@@ -27,6 +27,8 @@ class YahooClient:
         self._client = httpx.AsyncClient(timeout=TIMEOUT_SEC)
         # 429 を受けたら一定時間クールダウン
         self._cooldown_until: float = 0.0
+        # 並行呼び出しを直列化 (汎用検索 + ビック店舗検索の競合を防ぐ)
+        self._req_lock = asyncio.Lock()
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -111,16 +113,18 @@ class YahooClient:
         if seller_id:
             params["seller_id"] = seller_id
 
-        try:
-            resp = await self._client.get(ENDPOINT, params=params)
-        except httpx.HTTPError as exc:
-            log.warning(
-                "Yahoo search failed for %s: %s",
-                jan_code or query,
-                exc,
-            )
-            return []
-        await asyncio.sleep(SLEEP_SEC)
+        async with self._req_lock:
+            try:
+                resp = await self._client.get(ENDPOINT, params=params)
+            except httpx.HTTPError as exc:
+                log.warning(
+                    "Yahoo search failed for %s: %s",
+                    jan_code or query,
+                    exc,
+                )
+                await asyncio.sleep(SLEEP_SEC)
+                return []
+            await asyncio.sleep(SLEEP_SEC)
 
         if resp.status_code == 429:
             self._trigger_cooldown()

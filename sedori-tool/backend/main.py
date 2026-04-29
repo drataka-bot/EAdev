@@ -348,12 +348,10 @@ async def research(req: ResearchRequest) -> ResearchResponse:
 
     rakuten = RakutenClient(rakuten_id) if rakuten_id else None
     yahoo = YahooClient(yahoo_id) if yahoo_id else None
-    # Bic 用に別インスタンスを用意 (汎用検索とビック店舗検索の sleep を分離)
-    rakuten_for_bic = RakutenClient(rakuten_id) if rakuten_id else None
-    yahoo_for_bic = YahooClient(yahoo_id) if yahoo_id else None
+    # Bic 用にも同じインスタンスを共有 (Rakuten 1 req/sec 制限を守るため)
     bic = BicCameraClient(
-        rakuten=rakuten_for_bic,
-        yahoo=yahoo_for_bic,
+        rakuten=rakuten,
+        yahoo=yahoo,
         allow_scraping=enable_scraping,
     )
     yodobashi = YodobashiClient(allow_scraping=enable_scraping)
@@ -400,10 +398,6 @@ async def research(req: ResearchRequest) -> ResearchResponse:
             await rakuten.close()
         if yahoo:
             await yahoo.close()
-        if rakuten_for_bic:
-            await rakuten_for_bic.close()
-        if yahoo_for_bic:
-            await yahoo_for_bic.close()
         await bic.close()
         await yodobashi.close()
 
