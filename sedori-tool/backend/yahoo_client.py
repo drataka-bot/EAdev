@@ -37,9 +37,17 @@ class YahooClient:
     def _trigger_cooldown(self) -> None:
         self._cooldown_until = time.monotonic() + COOLDOWN_AFTER_429_SEC
         log.warning(
-            "Yahoo: 429 を受信。以降 %ss はリクエストをスキップします。",
+            "Yahoo: 429 を受信。%ss クールダウン後に処理を再開します。",
             int(COOLDOWN_AFTER_429_SEC),
         )
+
+    async def _await_cooldown(self) -> None:
+        """クールダウン中なら残り時間スリープして続行可能な状態にする。"""
+        remaining = self._cooldown_until - time.monotonic()
+        if remaining > 0:
+            log.info("Yahoo: クールダウン中。あと %.0fs 待機します。", remaining)
+            await asyncio.sleep(remaining + 0.5)
+            self._cooldown_until = 0.0
 
     async def search(
         self,
@@ -61,8 +69,7 @@ class YahooClient:
         hits: int = 5,
     ) -> list[dict[str, Any]]:
         """JAN を最優先、ヒット 0 件なら query でフォールバック。新品 + 中古を含む。"""
-        if self._in_cooldown():
-            return []
+        await self._await_cooldown()
         if jan:
             results = await self._search_once(
                 seller_id=seller_id, jan_code=jan, hits=hits
@@ -71,8 +78,7 @@ class YahooClient:
                 for r in results:
                     r["matched_by"] = "jan"
                 return results
-            if self._in_cooldown():
-                return []
+            await self._await_cooldown()
         if query:
             results = await self._search_once(
                 seller_id=seller_id, query=query, hits=hits

@@ -86,11 +86,19 @@ class RakutenClient:
         }
         if shop_code:
             params["shopCode"] = shop_code
-        try:
-            resp = await self._client.get(ENDPOINT, params=params)
-        except httpx.HTTPError as exc:
-            log.warning("Rakuten search failed for %s: %s", keyword, exc)
-            return []
+
+        # 楽天は連続リクエストで 429 を返すことがあるので 1 回だけ wait + retry
+        for attempt in range(2):
+            try:
+                resp = await self._client.get(ENDPOINT, params=params)
+            except httpx.HTTPError as exc:
+                log.warning("Rakuten search failed for %s: %s", keyword, exc)
+                return []
+            if resp.status_code == 429 and attempt == 0:
+                log.warning("Rakuten 429 for %s; sleeping 5s and retrying once.", keyword)
+                await asyncio.sleep(5.0)
+                continue
+            break
         if resp.status_code != 200:
             body_short = resp.text[:300]
             if "applicationId" in body_short:
