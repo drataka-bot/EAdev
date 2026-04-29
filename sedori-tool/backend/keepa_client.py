@@ -13,7 +13,9 @@ Amazon.co.jp (domain=5) から商品データを取得する。
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 from typing import Any, AsyncIterator, Optional
 
 import httpx
@@ -155,6 +157,62 @@ class KeepaClient:
             out[jan] = await self.jan_to_asin(jan)
             await asyncio.sleep(0.5)
         return out
+
+    # ------------------------------------------------------------------
+    # Product Finder (プレ値候補 ASIN 発見)
+    # ------------------------------------------------------------------
+    async def find_premium_asins(
+        self,
+        max_results: int = 30,
+        category_id: Optional[int] = None,
+        min_drops30: int = 5,
+        min_price: int = 500,
+        max_price: int = 200000,
+    ) -> list[str]:
+        """Keepa Product Finder で「プレ値の可能性が高い候補」ASIN を返す。
+
+        Keepa 側で current > list_price の直接比較はサポートされないため、
+        list_price あり + 売れ筋 (rank drops) + 在庫あり、の候補を返し、
+        呼び出し側で /product 詳細を取得して current > list_price を最終判定する。
+        """
+        selection = {
+            "domainId": self.domain,
+            "current_LISTPRICE_gte": 100,  # 定価 (yen*100 で 1円相当) 以上
+            "salesRankDrops30_gte": int(min_drops30),
+            "current_NEW_gte": int(min_price) * 100,
+            "current_NEW_lte": int(max_price) * 100,
+            "perPage": min(max(int(max_results), 1), 100),
+            "page": 0,
+            "sort": [["salesRankDrops30", "desc"]],
+        }
+        if category_id is not None:
+            selection["categories_include"] = [int(category_id)]
+
+        params = {
+            "key": self.api_key,
+            "selection": json.dumps(selection, separators=(",", ":")),
+        }
+        try:
+            resp = await self._client.get(
+                f"{KEEPA_BASE_URL}/query", params=params
+            )
+        except httpx.HTTPError as exc:
+            log.warning("Keepa Product Finder failed: %s", exc)
+            return []
+        try:
+            data = resp.json()
+            self._track_tokens(data)
+        except Exception:  # noqa: BLE001
+            return []
+        if resp.status_code != 200:
+            log.warning(
+                "Keepa /query (Product Finder) %s: %s",
+                resp.status_code,
+                resp.text[:200],
+            )
+            return []
+        asin_list = data.get("asinList") or []
+        return [a for a in asin_list if isinstance(a, str)]
 
     # ------------------------------------------------------------------
     # Product

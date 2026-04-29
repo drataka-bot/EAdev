@@ -351,6 +351,38 @@ async def health() -> dict[str, Any]:
     }
 
 
+class FindPremiumRequest(BaseModel):
+    max_results: Optional[int] = 30
+    category_id: Optional[int] = None
+    min_drops30: Optional[int] = 5
+    min_price: Optional[int] = 500
+    max_price: Optional[int] = 200000
+
+
+@app.post("/api/find-premium")
+async def find_premium(req: FindPremiumRequest) -> dict[str, Any]:
+    """Keepa Product Finder でプレ値候補 ASIN を発見。"""
+    api_key = _resolve_keepa_for_monitor()
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Keepa API キーが未設定です。設定画面で保存してください。",
+        )
+    keepa = await _get_keepa(api_key)
+    asins = await keepa.find_premium_asins(
+        max_results=req.max_results or 30,
+        category_id=req.category_id,
+        min_drops30=req.min_drops30 or 5,
+        min_price=req.min_price or 500,
+        max_price=req.max_price or 200000,
+    )
+    return {
+        "asins": asins,
+        "count": len(asins),
+        "tokens_left": keepa.last_tokens_left,
+    }
+
+
 @app.get("/api/keepa-graph/{asin}")
 async def keepa_graph(asin: str, width: int = 600, height: int = 200) -> Response:
     """Keepa の価格履歴 PNG をバックエンド proxy。API キーをサーバー側に隠す。"""
