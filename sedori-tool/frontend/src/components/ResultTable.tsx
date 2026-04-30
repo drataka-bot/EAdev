@@ -1498,13 +1498,18 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 {isCol("keepa_graph") && (
                   <td className="px-3 py-2 text-center">
                     {item.asin ? (
-                      <KeepaGraphCell
-                        graphUrl={`https://graph.keepa.com/pricehistory.png?asin=${item.asin}&domain=5&amazon=1&new=1&used=1&salesrank=1&bb=1&width=600&height=200`}
-                        keepaUrl={
+                      <a
+                        href={
                           item.keepa_url ??
                           `https://keepa.com/#!product/5-${item.asin}`
                         }
-                      />
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-1 bg-base-700 hover:bg-base-600 border border-base-500 hover:border-accent rounded text-xs text-accent"
+                        title="Keepa で価格履歴グラフを表示"
+                      >
+                        📈 Keepa
+                      </a>
                     ) : (
                       "-"
                     )}
@@ -1802,87 +1807,6 @@ function ConditionBadge({ condition }: { condition: string | null }) {
     >
       {isUsed ? "中古" : "新品"}
     </span>
-  );
-}
-
-function KeepaGraphCell({
-  graphUrl,
-  keepaUrl,
-}: {
-  graphUrl: string;
-  keepaUrl: string | null;
-}) {
-  const [open, setOpen] = useState(false);
-  const [error, setError] = useState(false);
-  if (error) {
-    return (
-      <div
-        className="text-[9px] text-red-300 px-2 py-1 border border-red-500/40 rounded"
-        title="グラフ取得失敗 (Keepa キー未設定 / バックエンド未再起動の可能性)"
-      >
-        グラフエラー
-        {keepaUrl && (
-          <a
-            href={keepaUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="block text-accent text-[9px] mt-0.5"
-          >
-            Keepa で開く
-          </a>
-        )}
-      </div>
-    );
-  }
-  return (
-    <div className="relative inline-block">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="block"
-        title="クリックで価格履歴グラフを表示"
-      >
-        <img
-          src={graphUrl}
-          alt="Keepa price graph"
-          loading="lazy"
-          onError={(e) => {
-            console.warn("Keepa graph load failed:", e.currentTarget.src);
-            setError(true);
-          }}
-          className="w-24 h-auto border border-base-500 rounded hover:border-accent"
-        />
-      </button>
-      {open && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6"
-             onClick={() => setOpen(false)}>
-          <div
-            className="bg-base-800 border border-base-500 rounded-lg p-4 max-w-[800px]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <img src={graphUrl} alt="Keepa price graph" className="w-full" />
-            <div className="text-right mt-3">
-              {keepaUrl && (
-                <a
-                  href={keepaUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-accent hover:underline text-sm mr-3"
-                >
-                  Keepa で開く ↗
-                </a>
-              )}
-              <button
-                onClick={() => setOpen(false)}
-                className="px-3 py-1 bg-base-600 hover:bg-base-500 rounded text-sm"
-              >
-                閉じる
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
   );
 }
 
