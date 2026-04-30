@@ -167,6 +167,20 @@ function App() {
   const handleSaveSettings = (next: AppSettings) => {
     saveSettings(next);
     setSettings(next);
+    // バックエンドの runtime config にも同期 (Keepa グラフ proxy や
+    // 監視ジョブが新しいキーをすぐ使えるようにするため)
+    void fetch("/api/watchlist/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        discord_webhook_url: next.discordWebhookUrl || null,
+        keepa_api_key: next.apiKey || null,
+        rakuten_app_id: next.rakutenAppId || null,
+        yahoo_client_id: next.yahooClientId || null,
+      }),
+    }).catch(() => {
+      // noop: 監視機能を使わない人にとっても致命的ではない
+    });
   };
 
   const summary = {

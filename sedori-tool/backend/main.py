@@ -451,6 +451,14 @@ async def research(req: ResearchRequest) -> ResearchResponse:
     keepa_key = _resolve_keepa_key(req.api_key)
     rakuten_id = _resolve(RAKUTEN_APP_ID_ENV, req.rakuten_app_id)
     yahoo_id = _resolve(YAHOO_CLIENT_ID_ENV, req.yahoo_client_id)
+    # 直近のリサーチで使ったキーを runtime config にも保持し、Keepa グラフ
+    # proxy や監視ジョブから参照できるようにする。
+    if keepa_key:
+        _runtime_config["keepa"] = keepa_key
+    if rakuten_id:
+        _runtime_config["rakuten"] = rakuten_id
+    if yahoo_id:
+        _runtime_config["yahoo"] = yahoo_id
     enable_scraping = (
         req.enable_scraping if req.enable_scraping is not None else ENABLE_SCRAPING_ENV
     )
