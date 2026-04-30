@@ -595,7 +595,9 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
     price_change_30d = _change_rate(buy_box_price or new_price, price_avg_30d)
     price_change_90d = _change_rate(buy_box_price or new_price, price_avg_90d)
 
-    # 商品画像 URL (Keepa imagesCSV 先頭ファイル → Amazon CDN)
+    # 商品画像 URL: Keepa imagesCSV 先頭ファイル名をバックエンド proxy
+    # (/api/amazon-image/{filename}) 経由で取得する。直接 m.media-amazon.com
+    # に img src で当てると Referer 拒否で 403 を返すケースがあるため。
     images_csv = product.get("imagesCSV") or ""
     image_url: Optional[str] = None
     if isinstance(images_csv, str) and images_csv.strip():
@@ -606,7 +608,7 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
             known_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp")
             if not any(lower.endswith(ext) for ext in known_exts):
                 first = f"{first}.jpg"
-            image_url = f"https://m.media-amazon.com/images/I/{first}"
+            image_url = f"/api/amazon-image/{first}"
 
     # 発売日 (Keepa minutes → ISO 日付)
     release_date = _keepa_minutes_to_iso(product.get("releaseDate"))

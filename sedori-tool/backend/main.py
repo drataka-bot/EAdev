@@ -391,23 +391,76 @@ async def find_premium(req: FindPremiumRequest) -> dict[str, Any]:
     }
 
 
+_AMAZON_IMAGE_FILENAME_RE = re.compile(r"^[A-Za-z0-9._+\-]{1,200}$")
+
+
+@app.get("/api/amazon-image/{filename}")
+async def amazon_image(filename: str) -> Response:
+    """Amazon CDN の商品画像をバックエンド proxy 経由で取得する。
+
+    img タグからの直アクセスでは Referer ベースで一部の CDN ノードが
+    拒否するケースがあるため、サーバー側でブラウザ風ヘッダで取得して
+    同一オリジンで返す。
+    """
+    if not _AMAZON_IMAGE_FILENAME_RE.match(filename):
+        raise HTTPException(status_code=400, detail="invalid filename")
+    url = f"https://m.media-amazon.com/images/I/{filename}"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
+        ),
+        "Accept": "image/webp,image/avif,image/png,image/*,*/*;q=0.8",
+        "Accept-Language": "ja,en;q=0.9",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        log.warning("Amazon image fetch failed for %s: %s", filename, exc)
+        raise HTTPException(status_code=502, detail="upstream fetch failed") from exc
+    if resp.status_code != 200:
+        log.info(
+            "Amazon image %s for %s",
+            resp.status_code,
+            filename,
+        )
+        raise HTTPException(status_code=resp.status_code, detail="image not found")
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("content-type") or "image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @app.get("/api/keepa-graph/{asin}")
-async def keepa_graph(asin: str, width: int = 600, height: int = 200) -> Response:
+async def keepa_graph(
+    asin: str,
+    width: int = 700,
+    height: int = 320,
+    range: int = 365,
+) -> Response:
     """Keepa 価格履歴 PNG をバックエンドで取得してストリーミング返却する。
 
     img タグからの直アクセスでは Keepa が Referer (localhost:5173) を見て
     403 を返すケースがあるため、サーバー側で取得して同一オリジンで返す。
     キーは付けない (キー無し公開チャートが最も互換性が高い)。
+
+    パラメータ既定値:
+      - range=365 (1 年分の履歴)
+      - 価格 (amazon/new/used/buybox/list price/FBA) + ランキング を全表示
     """
     asin = (asin or "").strip().upper()
     if not ASIN_RE.match(asin):
         raise HTTPException(status_code=400, detail="ASIN が不正です")
     width = max(100, min(1200, width))
     height = max(80, min(800, height))
+    range_days = max(1, min(3650, range))
     url = (
         "https://graph.keepa.com/pricehistory.png"
         f"?asin={asin}&domain={KEEPA_DOMAIN}"
-        "&amazon=1&new=1&used=1&salesrank=1&bb=1"
+        "&amazon=1&new=1&used=1&salesrank=1&bb=1&fba=1&lp=1"
+        f"&range={range_days}"
         f"&width={width}&height={height}"
     )
     headers = {
