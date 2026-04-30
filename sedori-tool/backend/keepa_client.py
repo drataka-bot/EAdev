@@ -80,6 +80,8 @@ class KeepaClient:
         # 直近の Keepa からの返答にあるトークン情報 (UI 表示用)
         self.last_tokens_left: Optional[int] = None
         self.last_refill_in_ms: Optional[int] = None
+        # 403 を受けた場合のクールダウン期限 (monotonic 秒)
+        self._blocked_until: float = 0.0
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -123,6 +125,8 @@ class KeepaClient:
     # JAN -> ASIN  (/query?type=product&term={JAN}&domain=5)
     # ------------------------------------------------------------------
     async def jan_to_asin(self, jan: str) -> Optional[str]:
+        if self._blocked_until and time.monotonic() < self._blocked_until:
+            return None
         params = {
             "key": self.api_key,
             "domain": self.domain,
@@ -137,8 +141,16 @@ class KeepaClient:
         try:
             data = resp.json()
             self._track_tokens(data)
-        except Exception:
+        except Exception:  # noqa: BLE001
             data = {}
+        if resp.status_code == 403:
+            self._blocked_until = time.monotonic() + 300.0
+            log.error(
+                "Keepa /query 403: %s\n"
+                "  → API キー無効 / IP ブロック / サブスク期限切れの可能性。5分クールダウン。",
+                resp.text[:200],
+            )
+            return None
         if resp.status_code != 200:
             log.warning("Keepa /query returned %s: %s", resp.status_code, resp.text[:200])
             return None
@@ -243,31 +255,62 @@ class KeepaClient:
                 await asyncio.sleep(self.batch_sleep_sec)
 
     async def _fetch_with_retry(self, params: dict[str, Any]) -> list[dict[str, Any]]:
-        """最大 1 回 429 リトライしつつ /product を叩く。"""
-        for attempt in range(2):
+        """最大 2 回まで 429/5xx をリトライしつつ /product を叩く。"""
+        # 403 クールダウン中は呼ばない
+        if self._blocked_until and time.monotonic() < self._blocked_until:
+            wait = self._blocked_until - time.monotonic()
+            log.warning("Keepa: 403 後のクールダウン中 (残 %.0fs)。スキップ。", wait)
+            return []
+
+        for attempt in range(3):
             try:
                 resp = await self._client.get(
                     f"{KEEPA_BASE_URL}/product", params=params
                 )
             except httpx.HTTPError as exc:
                 log.warning("Keepa /product request failed: %s", exc)
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
                 return []
 
             try:
                 data = resp.json()
                 self._track_tokens(data)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 data = {}
 
             if resp.status_code == 200:
                 return data.get("products") or []
 
-            if resp.status_code == 429 and attempt == 0:
+            if resp.status_code == 429 and attempt < 2:
                 wait_ms = data.get("refillIn") or 60_000
                 wait_sec = max(1.0, wait_ms / 1000.0 + 1.0)
                 log.warning(
-                    "Keepa 429 (tokensLeft=%s). Sleeping %.1fs and retrying once.",
+                    "Keepa 429 (tokensLeft=%s). Sleeping %.1fs and retrying.",
                     data.get("tokensLeft"),
+                    wait_sec,
+                )
+                await asyncio.sleep(wait_sec)
+                continue
+
+            if resp.status_code == 403:
+                # 403 は API キー無効 / IP ブロック / サブスク期限切れの可能性。
+                # 短時間のリトライでは回復しないため、5 分クールダウン。
+                self._blocked_until = time.monotonic() + 300.0
+                log.error(
+                    "Keepa 403 Forbidden: %s\n"
+                    "  → API キーが無効、サブスク期限切れ、または IP ブロックの可能性。\n"
+                    "  → 5 分クールダウンしてから次回再試行します。",
+                    resp.text[:200],
+                )
+                return []
+
+            if 500 <= resp.status_code < 600 and attempt < 2:
+                wait_sec = 2.0 * (attempt + 1)
+                log.warning(
+                    "Keepa %s server error. Retry in %.0fs.",
+                    resp.status_code,
                     wait_sec,
                 )
                 await asyncio.sleep(wait_sec)
@@ -522,6 +565,34 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
         if jan:
             break
 
+    # 電子書籍 (Kindle 等) 判定。productGroup / binding / productType を見る。
+    binding = (product.get("binding") or "").strip()
+    product_group = (product.get("productGroup") or "").strip()
+    media_type = "unknown"
+    is_ebook = False
+    blob_for_media = f"{binding} {product_group}"
+    if any(
+        k in blob_for_media
+        for k in ("Kindle", "kindle", "eBook", "ebook", "電子書籍")
+    ):
+        media_type = "ebook"
+        is_ebook = True
+    elif any(
+        k in blob_for_media
+        for k in (
+            "Book",
+            "Books",
+            "本",
+            "単行本",
+            "文庫",
+            "新書",
+            "コミック",
+            "ペーパーバック",
+            "ハードカバー",
+        )
+    ):
+        media_type = "book"
+
     asin = product.get("asin")
     # 価格履歴グラフは API キーが必要なのでバックエンド proxy 経由で取得する。
     keepa_graph_url = f"/api/keepa-graph/{asin}" if asin else None
@@ -567,4 +638,8 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
         "amazon_url": f"https://www.amazon.co.jp/dp/{asin}" if asin else None,
         "keepa_url": f"https://keepa.com/#!product/5-{asin}" if asin else None,
         "keepa_graph_url": keepa_graph_url,
+        "media_type": media_type,
+        "is_ebook": is_ebook,
+        "binding": binding or None,
+        "product_group": product_group or None,
     }

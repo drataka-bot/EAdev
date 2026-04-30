@@ -40,6 +40,122 @@ interface Props {
   onExport: (filtered: ProductItem[]) => void;
 }
 
+// 表示/非表示を切り替え可能な列。alwaysVisible は常に表示。
+type ColumnId =
+  | "image"
+  | "current_price"
+  | "lowest_new_price"
+  | "used_price"
+  | "price_max_all"
+  | "price_min_all"
+  | "price_avg_30d"
+  | "change_rate"
+  | "premium_rate"
+  | "rakuten"
+  | "yahoo"
+  | "bic"
+  | "yodobashi"
+  | "profit_rate"
+  | "monthly_profit"
+  | "rank_current"
+  | "monthly_sales"
+  | "sales_30d"
+  | "sales_90d"
+  | "new_offer_count"
+  | "fba_offer_count"
+  | "keepa_graph";
+
+const COLUMN_GROUPS: { group: string; cols: { id: ColumnId; label: string }[] }[] = [
+  {
+    group: "商品情報",
+    cols: [{ id: "image", label: "画像" }],
+  },
+  {
+    group: "価格",
+    cols: [
+      { id: "current_price", label: "現在価格" },
+      { id: "lowest_new_price", label: "新品最安" },
+      { id: "used_price", label: "中古最安" },
+    ],
+  },
+  {
+    group: "価格履歴",
+    cols: [
+      { id: "price_max_all", label: "過去最高" },
+      { id: "price_min_all", label: "過去最低" },
+      { id: "price_avg_30d", label: "30日平均" },
+      { id: "change_rate", label: "変動率" },
+      { id: "premium_rate", label: "プレ値率" },
+    ],
+  },
+  {
+    group: "仕入れ候補",
+    cols: [
+      { id: "rakuten", label: "楽天" },
+      { id: "yahoo", label: "Yahoo" },
+      { id: "bic", label: "ビック" },
+      { id: "yodobashi", label: "ヨドバシ" },
+    ],
+  },
+  {
+    group: "利益",
+    cols: [
+      { id: "profit_rate", label: "利益率" },
+      { id: "monthly_profit", label: "月予測利益" },
+    ],
+  },
+  {
+    group: "販売実績",
+    cols: [
+      { id: "rank_current", label: "ランク" },
+      { id: "monthly_sales", label: "月販売" },
+      { id: "sales_30d", label: "30日販売" },
+      { id: "sales_90d", label: "90日販売" },
+    ],
+  },
+  {
+    group: "競合",
+    cols: [
+      { id: "new_offer_count", label: "新品出品" },
+      { id: "fba_offer_count", label: "FBA" },
+    ],
+  },
+  {
+    group: "リンク",
+    cols: [{ id: "keepa_graph", label: "Keepaグラフ" }],
+  },
+];
+
+const DEFAULT_VISIBLE: ColumnId[] = [
+  "image",
+  "current_price",
+  "lowest_new_price",
+  "premium_rate",
+  "rakuten",
+  "yahoo",
+  "profit_rate",
+  "monthly_profit",
+  "rank_current",
+  "monthly_sales",
+  "new_offer_count",
+  "keepa_graph",
+];
+
+const COLS_KEY = "sedori_visible_cols_v1";
+
+function loadVisibleCols(): Set<ColumnId> {
+  try {
+    const raw = localStorage.getItem(COLS_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr as ColumnId[]);
+    }
+  } catch {
+    // noop
+  }
+  return new Set(DEFAULT_VISIBLE);
+}
+
 function yen(v: number | null | undefined): string {
   if (v == null) return "-";
   return `¥${v.toLocaleString()}`;
@@ -130,6 +246,8 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
   const [priceMax, setPriceMax] = useState<string>("");
   const [premiumOnly, setPremiumOnly] = useState(false);
   const [minPremiumPct, setMinPremiumPct] = useState<string>("10");
+  const [excludeEbooks, setExcludeEbooks] = useState(false);
+  const [ebooksOnly, setEbooksOnly] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [pageSize, setPageSize] = useState<number>(20);
   const [page, setPage] = useState<number>(1);
@@ -137,6 +255,36 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+  const [visibleCols, setVisibleCols] = useState<Set<ColumnId>>(() => loadVisibleCols());
+  const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
+
+  const isCol = (id: ColumnId) => visibleCols.has(id);
+  const groupColspan = (group: string): number => {
+    const def = COLUMN_GROUPS.find((g) => g.group === group);
+    if (!def) return 0;
+    return def.cols.filter((c) => visibleCols.has(c.id)).length;
+  };
+
+  const persistCols = (next: Set<ColumnId>) => {
+    setVisibleCols(next);
+    try {
+      localStorage.setItem(COLS_KEY, JSON.stringify([...next]));
+    } catch {
+      // noop
+    }
+  };
+  const toggleCol = (id: ColumnId) => {
+    const next = new Set(visibleCols);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    persistCols(next);
+  };
+  const showAllCols = () => {
+    const all = new Set<ColumnId>();
+    COLUMN_GROUPS.forEach((g) => g.cols.forEach((c) => all.add(c.id)));
+    persistCols(all);
+  };
+  const showDefaultCols = () => persistCols(new Set(DEFAULT_VISIBLE));
 
   const handleToggleFavorite = (asin: string | null) => {
     if (!asin) return;
@@ -244,6 +392,8 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
         const minPR2 = toNumber(minPremiumPct) ?? 0;
         if (pr == null || pr < minPR2) return false;
       }
+      if (excludeEbooks && item.is_ebook) return false;
+      if (ebooksOnly && !item.is_ebook) return false;
       if (kw) {
         const hay = [
           item.title,
@@ -289,6 +439,8 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
     profitableOnly,
     premiumOnly,
     minPremiumPct,
+    excludeEbooks,
+    ebooksOnly,
     favoritesOnly,
     favorites,
     sortKey,
@@ -356,6 +508,8 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
     setProfitableOnly(false);
     setPremiumOnly(false);
     setMinPremiumPct("10");
+    setExcludeEbooks(false);
+    setEbooksOnly(false);
   };
 
   // ----- フィルタプリセット (localStorage) -----
@@ -490,6 +644,13 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
           >
             リセット
           </button>
+          <button
+            type="button"
+            onClick={() => setColumnsPanelOpen((v) => !v)}
+            className="px-2 py-1 bg-base-700 hover:bg-base-600 border border-base-500 rounded text-xs text-gray-300"
+          >
+            列設定 {columnsPanelOpen ? "▲" : "▼"}
+          </button>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-400">
@@ -566,6 +727,54 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
       </div>
       {bulkMsg && (
         <div className="text-xs text-amber-300 mb-2">{bulkMsg}</div>
+      )}
+
+      {/* --- 列設定 --- */}
+      {columnsPanelOpen && (
+        <div className="bg-base-800/80 border border-base-500 rounded p-3 mb-4 text-xs space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-gray-300 font-bold">表示する列</span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={showDefaultCols}
+                className="px-2 py-0.5 bg-base-700 hover:bg-base-600 border border-base-500 rounded"
+              >
+                デフォルト
+              </button>
+              <button
+                type="button"
+                onClick={showAllCols}
+                className="px-2 py-0.5 bg-base-700 hover:bg-base-600 border border-base-500 rounded"
+              >
+                全部表示
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            {COLUMN_GROUPS.map((g) => (
+              <div key={g.group}>
+                <div className="text-gray-400 mb-1">{g.group}</div>
+                <div className="space-y-0.5">
+                  {g.cols.map((c) => (
+                    <label
+                      key={c.id}
+                      className="flex items-center gap-1 text-gray-300 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isCol(c.id)}
+                        onChange={() => toggleCol(c.id)}
+                        className="accent-accent"
+                      />
+                      {c.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* --- 詳細条件 --- */}
@@ -710,6 +919,30 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
             />
             黒字のみ表示
           </label>
+          <label className="flex items-center gap-2 text-gray-300 mt-5">
+            <input
+              type="checkbox"
+              checked={excludeEbooks}
+              onChange={(e) => {
+                setExcludeEbooks(e.target.checked);
+                if (e.target.checked) setEbooksOnly(false);
+              }}
+              className="accent-accent"
+            />
+            電子書籍を除外
+          </label>
+          <label className="flex items-center gap-2 text-gray-300 mt-5">
+            <input
+              type="checkbox"
+              checked={ebooksOnly}
+              onChange={(e) => {
+                setEbooksOnly(e.target.checked);
+                if (e.target.checked) setExcludeEbooks(false);
+              }}
+              className="accent-accent"
+            />
+            電子書籍のみ
+          </label>
           </div>
         </div>
       )}
@@ -720,77 +953,111 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
           <thead className="text-xs text-gray-300 bg-base-800/70 sticky top-0">
             <tr className="border-b border-base-600 text-[10px] uppercase tracking-wide text-gray-500">
               <th className="px-3 py-1" colSpan={1}>判定</th>
-              <th className="px-3 py-1 text-left" colSpan={3}>商品情報</th>
-              <th className="px-3 py-1 text-right" colSpan={3}>価格</th>
-              <th className="px-3 py-1 text-right" colSpan={5}>価格履歴</th>
-              <th className="px-3 py-1 text-right" colSpan={4}>仕入れ候補</th>
+              <th className="px-3 py-1 text-left" colSpan={2 + groupColspan("商品情報")}>商品情報</th>
+              {groupColspan("価格") > 0 && (
+                <th className="px-3 py-1 text-right" colSpan={groupColspan("価格")}>価格</th>
+              )}
+              {groupColspan("価格履歴") > 0 && (
+                <th className="px-3 py-1 text-right" colSpan={groupColspan("価格履歴")}>価格履歴</th>
+              )}
+              {groupColspan("仕入れ候補") > 0 && (
+                <th className="px-3 py-1 text-right" colSpan={groupColspan("仕入れ候補")}>仕入れ候補</th>
+              )}
               <th className="px-3 py-1 text-right" colSpan={1}>仕入</th>
-              <th className="px-3 py-1 text-right" colSpan={3}>利益</th>
-              <th className="px-3 py-1 text-right" colSpan={4}>販売実績</th>
-              <th className="px-3 py-1 text-right" colSpan={2}>競合</th>
-              <th className="px-3 py-1 text-center" colSpan={2}>リンク</th>
+              <th className="px-3 py-1 text-right" colSpan={1 + groupColspan("利益")}>利益</th>
+              {groupColspan("販売実績") > 0 && (
+                <th className="px-3 py-1 text-right" colSpan={groupColspan("販売実績")}>販売実績</th>
+              )}
+              {groupColspan("競合") > 0 && (
+                <th className="px-3 py-1 text-right" colSpan={groupColspan("競合")}>競合</th>
+              )}
+              <th className="px-3 py-1 text-center" colSpan={1 + groupColspan("リンク")}>リンク</th>
             </tr>
             <tr>
               <Th onClick={() => handleSort("score")} label={`スコア${sortArrow("score")}`} />
-              <th className="px-2 py-2 text-left">画像</th>
+              {isCol("image") && <th className="px-2 py-2 text-left">画像</th>}
               <Th onClick={() => handleSort("title")} label={`商品名${sortArrow("title")}`} />
               <th className="px-3 py-2 text-left">ASIN / サイズ</th>
-              <Th
-                onClick={() => handleSort("current_price")}
-                label={`現在価格${sortArrow("current_price")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("lowest_new_price")}
-                label={`新品最安${sortArrow("lowest_new_price")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("used_price")}
-                label={`中古最安${sortArrow("used_price")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("price_max_all")}
-                label={`過去最高${sortArrow("price_max_all")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("price_min_all")}
-                label={`過去最低${sortArrow("price_min_all")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("price_avg_30d")}
-                label={`30日平均${sortArrow("price_avg_30d")}`}
-                align="right"
-              />
-              <th className="px-3 py-2 text-right">変動率</th>
-              <Th
-                onClick={() => handleSort("premium_rate")}
-                label={`プレ値率${sortArrow("premium_rate")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("rakuten_price")}
-                label={`楽天${sortArrow("rakuten_price")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("yahoo_price")}
-                label={`Yahoo${sortArrow("yahoo_price")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("bic_price")}
-                label={`ビック${sortArrow("bic_price")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("yodobashi_price")}
-                label={`ヨドバシ${sortArrow("yodobashi_price")}`}
-                align="right"
-              />
+              {isCol("current_price") && (
+                <Th
+                  onClick={() => handleSort("current_price")}
+                  label={`現在価格${sortArrow("current_price")}`}
+                  align="right"
+                />
+              )}
+              {isCol("lowest_new_price") && (
+                <Th
+                  onClick={() => handleSort("lowest_new_price")}
+                  label={`新品最安${sortArrow("lowest_new_price")}`}
+                  align="right"
+                />
+              )}
+              {isCol("used_price") && (
+                <Th
+                  onClick={() => handleSort("used_price")}
+                  label={`中古最安${sortArrow("used_price")}`}
+                  align="right"
+                />
+              )}
+              {isCol("price_max_all") && (
+                <Th
+                  onClick={() => handleSort("price_max_all")}
+                  label={`過去最高${sortArrow("price_max_all")}`}
+                  align="right"
+                />
+              )}
+              {isCol("price_min_all") && (
+                <Th
+                  onClick={() => handleSort("price_min_all")}
+                  label={`過去最低${sortArrow("price_min_all")}`}
+                  align="right"
+                />
+              )}
+              {isCol("price_avg_30d") && (
+                <Th
+                  onClick={() => handleSort("price_avg_30d")}
+                  label={`30日平均${sortArrow("price_avg_30d")}`}
+                  align="right"
+                />
+              )}
+              {isCol("change_rate") && (
+                <th className="px-3 py-2 text-right">変動率</th>
+              )}
+              {isCol("premium_rate") && (
+                <Th
+                  onClick={() => handleSort("premium_rate")}
+                  label={`プレ値率${sortArrow("premium_rate")}`}
+                  align="right"
+                />
+              )}
+              {isCol("rakuten") && (
+                <Th
+                  onClick={() => handleSort("rakuten_price")}
+                  label={`楽天${sortArrow("rakuten_price")}`}
+                  align="right"
+                />
+              )}
+              {isCol("yahoo") && (
+                <Th
+                  onClick={() => handleSort("yahoo_price")}
+                  label={`Yahoo${sortArrow("yahoo_price")}`}
+                  align="right"
+                />
+              )}
+              {isCol("bic") && (
+                <Th
+                  onClick={() => handleSort("bic_price")}
+                  label={`ビック${sortArrow("bic_price")}`}
+                  align="right"
+                />
+              )}
+              {isCol("yodobashi") && (
+                <Th
+                  onClick={() => handleSort("yodobashi_price")}
+                  label={`ヨドバシ${sortArrow("yodobashi_price")}`}
+                  align="right"
+                />
+              )}
               <Th
                 onClick={() => handleSort("purchase_price")}
                 label={`仕入れ${sortArrow("purchase_price")}`}
@@ -801,54 +1068,75 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 label={`利益${sortArrow("profit")}`}
                 align="right"
               />
-              <Th
-                onClick={() => handleSort("profit_rate")}
-                label={`利益率${sortArrow("profit_rate")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("monthly_profit")}
-                label={`月予測利益${sortArrow("monthly_profit")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("rank_current")}
-                label={`ランク${sortArrow("rank_current")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("monthly_sales")}
-                label={`月販売${sortArrow("monthly_sales")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("sales_30d")}
-                label={`30日${sortArrow("sales_30d")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("sales_90d")}
-                label={`90日${sortArrow("sales_90d")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("new_offer_count")}
-                label={`新品出品${sortArrow("new_offer_count")}`}
-                align="right"
-              />
-              <Th
-                onClick={() => handleSort("fba_offer_count")}
-                label={`FBA${sortArrow("fba_offer_count")}`}
-                align="right"
-              />
+              {isCol("profit_rate") && (
+                <Th
+                  onClick={() => handleSort("profit_rate")}
+                  label={`利益率${sortArrow("profit_rate")}`}
+                  align="right"
+                />
+              )}
+              {isCol("monthly_profit") && (
+                <Th
+                  onClick={() => handleSort("monthly_profit")}
+                  label={`月予測利益${sortArrow("monthly_profit")}`}
+                  align="right"
+                />
+              )}
+              {isCol("rank_current") && (
+                <Th
+                  onClick={() => handleSort("rank_current")}
+                  label={`ランク${sortArrow("rank_current")}`}
+                  align="right"
+                />
+              )}
+              {isCol("monthly_sales") && (
+                <Th
+                  onClick={() => handleSort("monthly_sales")}
+                  label={`月販売${sortArrow("monthly_sales")}`}
+                  align="right"
+                />
+              )}
+              {isCol("sales_30d") && (
+                <Th
+                  onClick={() => handleSort("sales_30d")}
+                  label={`30日${sortArrow("sales_30d")}`}
+                  align="right"
+                />
+              )}
+              {isCol("sales_90d") && (
+                <Th
+                  onClick={() => handleSort("sales_90d")}
+                  label={`90日${sortArrow("sales_90d")}`}
+                  align="right"
+                />
+              )}
+              {isCol("new_offer_count") && (
+                <Th
+                  onClick={() => handleSort("new_offer_count")}
+                  label={`新品出品${sortArrow("new_offer_count")}`}
+                  align="right"
+                />
+              )}
+              {isCol("fba_offer_count") && (
+                <Th
+                  onClick={() => handleSort("fba_offer_count")}
+                  label={`FBA${sortArrow("fba_offer_count")}`}
+                  align="right"
+                />
+              )}
               <th className="px-3 py-2 text-center">Amazon</th>
-              <th className="px-3 py-2 text-center">Keepa</th>
+              {isCol("keepa_graph") && (
+                <th className="px-3 py-2 text-center">Keepa</th>
+              )}
             </tr>
           </thead>
           <tbody>
             {pageRows.length === 0 && (
               <tr>
-                <td colSpan={28} className="text-center py-10 text-gray-500">
+                <td
+                  colSpan={6 + visibleCols.size}
+                  className="text-center py-10 text-gray-500"
+                >
                   データがありません
                 </td>
               </tr>
@@ -880,24 +1168,26 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                     </button>
                   </div>
                 </td>
-                <td className="px-2 py-2">
-                  {item.image_url ? (
-                    <a
-                      href={item.amazon_url ?? "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <img
-                        src={item.image_url}
-                        alt=""
-                        loading="lazy"
-                        className="w-12 h-12 object-contain border border-base-600 rounded bg-white/5"
-                      />
-                    </a>
-                  ) : (
-                    <div className="w-12 h-12 border border-base-700 rounded bg-base-800" />
-                  )}
-                </td>
+                {isCol("image") && (
+                  <td className="px-2 py-2">
+                    {item.image_url ? (
+                      <a
+                        href={item.amazon_url ?? "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <img
+                          src={item.image_url}
+                          alt=""
+                          loading="lazy"
+                          className="w-12 h-12 object-contain border border-base-600 rounded bg-white/5"
+                        />
+                      </a>
+                    ) : (
+                      <div className="w-12 h-12 border border-base-700 rounded bg-base-800" />
+                    )}
+                  </td>
+                )}
                 <td className="px-3 py-2 max-w-[260px]">
                   {item.title ? (
                     <a
@@ -916,6 +1206,11 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                   )}
                   {item.brand && (
                     <div className="text-xs text-gray-500 mt-0.5">{item.brand}</div>
+                  )}
+                  {item.is_ebook && (
+                    <span className="inline-block text-[9px] px-1 mt-0.5 rounded bg-cyan-500/30 text-cyan-200">
+                      電子書籍
+                    </span>
                   )}
                   {item.list_price != null && (
                     <div className="text-[10px] text-gray-500">
@@ -952,103 +1247,127 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                     </div>
                   )}
                 </td>
-                <td className="px-3 py-2 text-right text-gray-200">
-                  {yen(item.current_price)}
-                  {item.buy_box_is_amazon ? (
-                    <div className="text-[10px] text-amber-400">Amazon直売</div>
-                  ) : item.amazon_price != null ? (
-                    <div className="text-[10px] text-gray-500">
-                      Amazon: {yen(item.amazon_price)}
-                    </div>
-                  ) : null}
-                </td>
-                <td className="px-3 py-2 text-right text-gray-200">
-                  {yen(item.lowest_new_price)}
-                  {item.fba_price != null && (
-                    <div className="text-[10px] text-gray-500">
-                      FBA: {yen(item.fba_price)}
-                    </div>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-right text-gray-200">
-                  {yen(item.used_price)}
-                </td>
-                <td className="px-3 py-2 text-right text-gray-300">
-                  {yen(item.price_max_all)}
-                </td>
-                <td className="px-3 py-2 text-right text-gray-300">
-                  {yen(item.price_min_all)}
-                </td>
-                <td className="px-3 py-2 text-right text-gray-200">
-                  {yen(item.price_avg_30d)}
-                  {item.price_avg_90d != null && (
-                    <div className="text-[10px] text-gray-500">
-                      90日: {yen(item.price_avg_90d)}
-                    </div>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <ChangeRate value={item.price_change_30d} suffix="30d" />
-                  <ChangeRate value={item.price_change_90d} suffix="90d" />
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <PremiumRateCell rate={premiumRate(item)} listPrice={item.list_price} />
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <OffersCell
-                    offers={item.rakuten_offers}
-                    cheapest={item.cheapest_source === "rakuten"}
-                    color="text-red-400"
-                    onSelect={(price) =>
-                      onPurchasePriceChange(
-                        item.asin ?? item.input_code,
-                        item.input_code,
-                        price
-                      )
-                    }
-                  />
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <OffersCell
-                    offers={item.yahoo_offers}
-                    cheapest={item.cheapest_source === "yahoo"}
-                    color="text-purple-400"
-                    onSelect={(price) =>
-                      onPurchasePriceChange(
-                        item.asin ?? item.input_code,
-                        item.input_code,
-                        price
-                      )
-                    }
-                  />
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <SourceCell
-                    price={item.bic_price}
-                    url={item.bic_url}
-                    shop={item.bic_shop}
-                    cheapest={item.cheapest_source === "bic"}
-                    color="text-orange-400"
-                    badge={
-                      item.bic_source === "biccamera"
-                        ? "本店"
-                        : item.bic_source === "rakuten"
-                        ? "楽天店"
-                        : item.bic_source === "yahoo"
-                        ? "Yahoo店"
-                        : null
-                    }
-                  />
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <SourceCell
-                    price={item.yodobashi_price}
-                    url={item.yodobashi_url}
-                    shop={item.yodobashi_shop}
-                    cheapest={item.cheapest_source === "yodobashi"}
-                    color="text-yellow-300"
-                  />
-                </td>
+                {isCol("current_price") && (
+                  <td className="px-3 py-2 text-right text-gray-200">
+                    {yen(item.current_price)}
+                    {item.buy_box_is_amazon ? (
+                      <div className="text-[10px] text-amber-400">Amazon直売</div>
+                    ) : item.amazon_price != null ? (
+                      <div className="text-[10px] text-gray-500">
+                        Amazon: {yen(item.amazon_price)}
+                      </div>
+                    ) : null}
+                  </td>
+                )}
+                {isCol("lowest_new_price") && (
+                  <td className="px-3 py-2 text-right text-gray-200">
+                    {yen(item.lowest_new_price)}
+                    {item.fba_price != null && (
+                      <div className="text-[10px] text-gray-500">
+                        FBA: {yen(item.fba_price)}
+                      </div>
+                    )}
+                  </td>
+                )}
+                {isCol("used_price") && (
+                  <td className="px-3 py-2 text-right text-gray-200">
+                    {yen(item.used_price)}
+                  </td>
+                )}
+                {isCol("price_max_all") && (
+                  <td className="px-3 py-2 text-right text-gray-300">
+                    {yen(item.price_max_all)}
+                  </td>
+                )}
+                {isCol("price_min_all") && (
+                  <td className="px-3 py-2 text-right text-gray-300">
+                    {yen(item.price_min_all)}
+                  </td>
+                )}
+                {isCol("price_avg_30d") && (
+                  <td className="px-3 py-2 text-right text-gray-200">
+                    {yen(item.price_avg_30d)}
+                    {item.price_avg_90d != null && (
+                      <div className="text-[10px] text-gray-500">
+                        90日: {yen(item.price_avg_90d)}
+                      </div>
+                    )}
+                  </td>
+                )}
+                {isCol("change_rate") && (
+                  <td className="px-3 py-2 text-right">
+                    <ChangeRate value={item.price_change_30d} suffix="30d" />
+                    <ChangeRate value={item.price_change_90d} suffix="90d" />
+                  </td>
+                )}
+                {isCol("premium_rate") && (
+                  <td className="px-3 py-2 text-right">
+                    <PremiumRateCell rate={premiumRate(item)} listPrice={item.list_price} />
+                  </td>
+                )}
+                {isCol("rakuten") && (
+                  <td className="px-3 py-2 text-right">
+                    <OffersCell
+                      offers={item.rakuten_offers}
+                      cheapest={item.cheapest_source === "rakuten"}
+                      color="text-red-400"
+                      onSelect={(price) =>
+                        onPurchasePriceChange(
+                          item.asin ?? item.input_code,
+                          item.input_code,
+                          price
+                        )
+                      }
+                    />
+                  </td>
+                )}
+                {isCol("yahoo") && (
+                  <td className="px-3 py-2 text-right">
+                    <OffersCell
+                      offers={item.yahoo_offers}
+                      cheapest={item.cheapest_source === "yahoo"}
+                      color="text-purple-400"
+                      onSelect={(price) =>
+                        onPurchasePriceChange(
+                          item.asin ?? item.input_code,
+                          item.input_code,
+                          price
+                        )
+                      }
+                    />
+                  </td>
+                )}
+                {isCol("bic") && (
+                  <td className="px-3 py-2 text-right">
+                    <SourceCell
+                      price={item.bic_price}
+                      url={item.bic_url}
+                      shop={item.bic_shop}
+                      cheapest={item.cheapest_source === "bic"}
+                      color="text-orange-400"
+                      badge={
+                        item.bic_source === "biccamera"
+                          ? "本店"
+                          : item.bic_source === "rakuten"
+                          ? "楽天店"
+                          : item.bic_source === "yahoo"
+                          ? "Yahoo店"
+                          : null
+                      }
+                    />
+                  </td>
+                )}
+                {isCol("yodobashi") && (
+                  <td className="px-3 py-2 text-right">
+                    <SourceCell
+                      price={item.yodobashi_price}
+                      url={item.yodobashi_url}
+                      shop={item.yodobashi_shop}
+                      cheapest={item.cheapest_source === "yodobashi"}
+                      color="text-yellow-300"
+                    />
+                  </td>
+                )}
                 <td className="px-3 py-2 text-right">
                   <input
                     type="number"
@@ -1077,58 +1396,74 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 >
                   {yen(item.profit)}
                 </td>
-                <td
-                  className={`px-3 py-2 text-right ${
-                    item.profit_rate == null
-                      ? "text-gray-500"
-                      : item.profit_rate < 0
-                      ? "text-red-400"
-                      : "text-gray-100"
-                  }`}
-                >
-                  {item.profit_rate == null ? "-" : `${item.profit_rate.toFixed(1)}%`}
-                </td>
-                <td
-                  className={`px-3 py-2 text-right ${
-                    item.monthly_profit == null
-                      ? "text-gray-500"
-                      : item.monthly_profit < 0
-                      ? "text-red-400"
-                      : "text-emerald-300"
-                  }`}
-                >
-                  {item.monthly_profit == null ? "-" : yen(item.monthly_profit)}
-                  <div className="text-[10px] text-gray-500">/月</div>
-                </td>
-                <td className="px-3 py-2 text-right text-gray-200">
-                  {num(item.rank_current)}
-                  {item.rank_avg90 != null && (
+                {isCol("profit_rate") && (
+                  <td
+                    className={`px-3 py-2 text-right ${
+                      item.profit_rate == null
+                        ? "text-gray-500"
+                        : item.profit_rate < 0
+                        ? "text-red-400"
+                        : "text-gray-100"
+                    }`}
+                  >
+                    {item.profit_rate == null ? "-" : `${item.profit_rate.toFixed(1)}%`}
+                  </td>
+                )}
+                {isCol("monthly_profit") && (
+                  <td
+                    className={`px-3 py-2 text-right ${
+                      item.monthly_profit == null
+                        ? "text-gray-500"
+                        : item.monthly_profit < 0
+                        ? "text-red-400"
+                        : "text-emerald-300"
+                    }`}
+                  >
+                    {item.monthly_profit == null ? "-" : yen(item.monthly_profit)}
+                    <div className="text-[10px] text-gray-500">/月</div>
+                  </td>
+                )}
+                {isCol("rank_current") && (
+                  <td className="px-3 py-2 text-right text-gray-200">
+                    {num(item.rank_current)}
+                    {item.rank_avg90 != null && (
+                      <div className="text-[10px] text-gray-500">
+                        90日平: {num(item.rank_avg90)}
+                      </div>
+                    )}
+                  </td>
+                )}
+                {isCol("monthly_sales") && (
+                  <td className="px-3 py-2 text-right text-gray-200">
+                    {num(item.monthly_sales)}
+                  </td>
+                )}
+                {isCol("sales_30d") && (
+                  <td className="px-3 py-2 text-right text-gray-400">
+                    {num(item.sales_30d)}
+                  </td>
+                )}
+                {isCol("sales_90d") && (
+                  <td className="px-3 py-2 text-right text-gray-400">
+                    {num(item.sales_90d)}
+                  </td>
+                )}
+                {isCol("new_offer_count") && (
+                  <td className="px-3 py-2 text-right text-gray-200">
+                    {num(item.new_offer_count)}
                     <div className="text-[10px] text-gray-500">
-                      90日平: {num(item.rank_avg90)}
+                      中古 {num(item.used_offer_count)}
                     </div>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-right text-gray-200">
-                  {num(item.monthly_sales)}
-                </td>
-                <td className="px-3 py-2 text-right text-gray-400">
-                  {num(item.sales_30d)}
-                </td>
-                <td className="px-3 py-2 text-right text-gray-400">
-                  {num(item.sales_90d)}
-                </td>
-                <td className="px-3 py-2 text-right text-gray-200">
-                  {num(item.new_offer_count)}
-                  <div className="text-[10px] text-gray-500">
-                    中古 {num(item.used_offer_count)}
-                  </div>
-                </td>
-                <td className="px-3 py-2 text-right text-gray-200">
-                  {num(item.fba_offer_count)}
-                  <div className="text-[10px] text-gray-500">
-                    自己 {num(item.fbm_offer_count)}
-                  </div>
-                </td>
+                  </td>
+                )}
+                {isCol("fba_offer_count") && (
+                  <td className="px-3 py-2 text-right text-gray-200">
+                    {num(item.fba_offer_count)}
+                    <div className="text-[10px] text-gray-500">
+                      自己 {num(item.fbm_offer_count)}
+                    </div>
+                  </td>
+                )}
                 <td className="px-3 py-2 text-center">
                   {item.amazon_url ? (
                     <a
@@ -1143,25 +1478,27 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                     "-"
                   )}
                 </td>
-                <td className="px-3 py-2 text-center">
-                  {item.keepa_graph_url ? (
-                    <KeepaGraphCell
-                      graphUrl={item.keepa_graph_url}
-                      keepaUrl={item.keepa_url}
-                    />
-                  ) : item.keepa_url ? (
-                    <a
-                      href={item.keepa_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-accent hover:underline text-xs"
-                    >
-                      開く
-                    </a>
-                  ) : (
-                    "-"
-                  )}
-                </td>
+                {isCol("keepa_graph") && (
+                  <td className="px-3 py-2 text-center">
+                    {item.keepa_graph_url ? (
+                      <KeepaGraphCell
+                        graphUrl={item.keepa_graph_url}
+                        keepaUrl={item.keepa_url}
+                      />
+                    ) : item.keepa_url ? (
+                      <a
+                        href={item.keepa_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-accent hover:underline text-xs"
+                      >
+                        開く
+                      </a>
+                    ) : (
+                      "-"
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

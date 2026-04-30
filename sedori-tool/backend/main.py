@@ -169,6 +169,10 @@ class ProductItem(BaseModel):
     amazon_url: Optional[str] = None
     keepa_url: Optional[str] = None
     keepa_graph_url: Optional[str] = None
+    media_type: Optional[str] = None  # "ebook" / "book" / "unknown" / None
+    is_ebook: bool = False
+    binding: Optional[str] = None
+    product_group: Optional[str] = None
     # 仕入れ候補 (top 1: 互換用)
     rakuten_price: Optional[int] = None
     rakuten_url: Optional[str] = None

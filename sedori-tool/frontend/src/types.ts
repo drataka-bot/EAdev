@@ -54,6 +54,10 @@ export interface ProductItem {
   amazon_url: string | null;
   keepa_url: string | null;
   keepa_graph_url: string | null;
+  media_type: string | null;
+  is_ebook: boolean;
+  binding: string | null;
+  product_group: string | null;
   rakuten_price: number | null;
   rakuten_url: string | null;
   rakuten_shop: string | null;

@@ -199,6 +199,10 @@ class YahooClient:
                 )
             ):
                 continue
+            # 複数個セット / まとめ買い商品を除外
+            from rakuten_client import is_multipack as _is_multipack
+            if _is_multipack(item_name):
+                continue
             # Yahoo Shopping API は condition フィールドを持つ ('new' / 'used')
             condition = raw.get("condition")
             if condition not in ("new", "used"):

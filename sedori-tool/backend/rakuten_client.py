@@ -8,10 +8,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any, Optional
 
 import httpx
+
+# 複数個セット / まとめ買い検出
+MULTIPACK_RE = re.compile(
+    r"(\d+\s*[個本枚袋箱冊台缶杯]\s*セット|"
+    r"\d+\s*(?:P|pack|PACK|パック)\b|"
+    r"まとめ買い|まとめ売り|セット販売|セット商品|"
+    r"[xX×]\s*\d+\s*(?:個|本|セット)|"
+    r"\d+\s*(?:個|本)\s*入り\s*セット|"
+    r"\d+\s*(?:個|本)\s*まとめ)"
+)
+
+
+def is_multipack(text: str) -> bool:
+    if not text:
+        return False
+    return bool(MULTIPACK_RE.search(text))
 
 log = logging.getLogger(__name__)
 
@@ -204,6 +221,9 @@ class RakutenClient:
                     "販売停止",
                 )
             ):
+                continue
+            # 複数個セット / まとめ買い商品を除外 (単品 ASIN との比較を歪めるため)
+            if is_multipack(item_title):
                 continue
             # 楽天 API には new/used フィールドが無いので、ショップ名・タイトルから推定
             condition = "used" if any(k in blob for k in ("中古", "USED", "Used")) else "new"
