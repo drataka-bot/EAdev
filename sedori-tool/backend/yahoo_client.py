@@ -174,7 +174,31 @@ class YahooClient:
                 price = None
             if price is None:
                 continue
+            # 在庫チェック (レスポンス側): inStock が明示的に false なら除外
+            if raw.get("inStock") is False:
+                continue
             seller = raw.get("seller") or {}
+            shop_name = seller.get("name") if isinstance(seller, dict) else None
+            item_name = raw.get("name") or ""
+            blob = f"{shop_name or ''} {item_name}"
+            # 在庫切れキーワードを除外
+            if any(
+                k in blob
+                for k in (
+                    "在庫切れ",
+                    "在庫なし",
+                    "売り切れ",
+                    "売切れ",
+                    "完売",
+                    "販売終了",
+                    "品切れ",
+                    "入荷待ち",
+                    "再入荷待ち",
+                    "受注停止",
+                    "販売停止",
+                )
+            ):
+                continue
             # Yahoo Shopping API は condition フィールドを持つ ('new' / 'used')
             condition = raw.get("condition")
             if condition not in ("new", "used"):
@@ -184,8 +208,8 @@ class YahooClient:
                 {
                     "price": price,
                     "url": raw.get("url"),
-                    "shop": seller.get("name") if isinstance(seller, dict) else None,
-                    "title": raw.get("name"),
+                    "shop": shop_name,
+                    "title": item_name or None,
                     "condition": condition,
                 }
             )

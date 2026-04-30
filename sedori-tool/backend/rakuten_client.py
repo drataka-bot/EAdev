@@ -181,10 +181,31 @@ class RakutenClient:
                 price = None
             if price is None:
                 continue
+            # 在庫チェック (レスポンス側): availability=0 は販売停止
+            if raw.get("availability") == 0:
+                continue
             shop = raw.get("shopName") or ""
             item_title = raw.get("itemName") or ""
-            # 楽天 API には new/used フィールドが無いので、ショップ名・タイトルから推定
             blob = f"{shop} {item_title}"
+            # 在庫切れキーワードを除外
+            if any(
+                k in blob
+                for k in (
+                    "在庫切れ",
+                    "在庫なし",
+                    "売り切れ",
+                    "売切れ",
+                    "完売",
+                    "販売終了",
+                    "品切れ",
+                    "入荷待ち",
+                    "再入荷待ち",
+                    "受注停止",
+                    "販売停止",
+                )
+            ):
+                continue
+            # 楽天 API には new/used フィールドが無いので、ショップ名・タイトルから推定
             condition = "used" if any(k in blob for k in ("中古", "USED", "Used")) else "new"
             out.append(
                 {
