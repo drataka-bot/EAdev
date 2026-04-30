@@ -54,10 +54,15 @@ export function InputPanel({ onSubmit, loading, disabled }: Props) {
   };
 
   const handleDiscover = async () => {
+    const label = discoverLimit <= 0 ? "無制限 (最大 10,000 件)" : `最大 ${discoverLimit} 件`;
+    const tokenHint =
+      discoverLimit <= 0 || discoverLimit > 200
+        ? "数百〜数千トークン消費する可能性あり"
+        : "概算 50〜200 トークン";
     if (
       !confirm(
-        `Keepa Product Finder で プレ値候補を最大 ${discoverLimit} 件取得します。\n` +
-          `Keepa トークンを消費します (概算: 50〜100 トークン)。よろしいですか?`
+        `Keepa Product Finder で プレ値候補を ${label} 取得します。\n` +
+          `${tokenHint}。よろしいですか?`
       )
     )
       return;
@@ -165,12 +170,16 @@ export function InputPanel({ onSubmit, loading, disabled }: Props) {
               取得件数:
               <input
                 type="number"
-                min={1}
-                max={100}
+                min={0}
                 value={discoverLimit}
-                onChange={(e) => setDiscoverLimit(Math.max(1, Math.min(100, Number(e.target.value) || 30)))}
-                className="w-20 bg-base-900 border border-base-500 rounded px-2 py-0.5 text-right"
+                onChange={(e) =>
+                  setDiscoverLimit(Math.max(0, Number(e.target.value) || 0))
+                }
+                className="w-24 bg-base-900 border border-base-500 rounded px-2 py-0.5 text-right"
               />
+              <span className="text-[10px] text-gray-500">
+                (0 = 無制限)
+              </span>
             </label>
             <label className="flex items-center gap-1 text-gray-300">
               最小30日販売数:

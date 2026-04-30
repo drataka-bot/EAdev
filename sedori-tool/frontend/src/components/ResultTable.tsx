@@ -1852,7 +1852,6 @@ function KeepaGraphCell({
           src={graphUrl}
           alt="Keepa price graph"
           loading="lazy"
-          referrerPolicy="no-referrer"
           onError={(e) => {
             console.warn("Keepa graph load failed:", e.currentTarget.src);
             setError(true);

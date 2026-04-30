@@ -365,7 +365,10 @@ class FindPremiumRequest(BaseModel):
 
 @app.post("/api/find-premium")
 async def find_premium(req: FindPremiumRequest) -> dict[str, Any]:
-    """Keepa Product Finder でプレ値候補 ASIN を発見。"""
+    """Keepa Product Finder でプレ値候補 ASIN を発見。
+
+    max_results <= 0 を渡すと無制限モード (Keepa からページング取得し続ける)。
+    """
     api_key = _resolve_keepa_for_monitor()
     if not api_key:
         raise HTTPException(
@@ -373,8 +376,9 @@ async def find_premium(req: FindPremiumRequest) -> dict[str, Any]:
             detail="Keepa API キーが未設定です。設定画面で保存してください。",
         )
     keepa = await _get_keepa(api_key)
+    requested = req.max_results
     asins = await keepa.find_premium_asins(
-        max_results=req.max_results or 30,
+        max_results=requested if requested is not None else 30,
         category_id=req.category_id,
         min_drops30=req.min_drops30 or 5,
         min_price=req.min_price or 500,

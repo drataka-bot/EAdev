@@ -220,45 +220,83 @@ class KeepaClient:
         Keepa 側で current > list_price の直接比較はサポートされないため、
         list_price あり + 売れ筋 (rank drops) + 在庫あり、の候補を返し、
         呼び出し側で /product 詳細を取得して current > list_price を最終判定する。
-        """
-        selection = {
-            "domainId": self.domain,
-            "current_LISTPRICE_gte": 100,  # 定価 (yen*100 で 1円相当) 以上
-            "salesRankDrops30_gte": int(min_drops30),
-            "current_NEW_gte": int(min_price) * 100,
-            "current_NEW_lte": int(max_price) * 100,
-            "perPage": min(max(int(max_results), 1), 100),
-            "page": 0,
-            "sort": [["salesRankDrops30", "desc"]],
-        }
-        if category_id is not None:
-            selection["categories_include"] = [int(category_id)]
 
-        params = {
-            "key": self.api_key,
-            "selection": json.dumps(selection, separators=(",", ":")),
-        }
-        try:
-            resp = await self._client.get(
-                f"{KEEPA_BASE_URL}/query", params=params
+        max_results が 100 を超える場合は page を進めながら結合する。
+        max_results <= 0 を渡すと「無制限」モードで全ページを取得する。
+        """
+        unlimited = int(max_results) <= 0
+        target = 10000 if unlimited else int(max_results)
+        per_page = 100  # Keepa /query の上限
+        out: list[str] = []
+        page = 0
+
+        while len(out) < target:
+            remaining = target - len(out)
+            this_page = min(per_page, remaining)
+            selection = {
+                "domainId": self.domain,
+                "current_LISTPRICE_gte": 100,
+                "salesRankDrops30_gte": int(min_drops30),
+                "current_NEW_gte": int(min_price) * 100,
+                "current_NEW_lte": int(max_price) * 100,
+                "perPage": this_page,
+                "page": page,
+                "sort": [["salesRankDrops30", "desc"]],
+            }
+            if category_id is not None:
+                selection["categories_include"] = [int(category_id)]
+
+            params = {
+                "key": self.api_key,
+                "selection": json.dumps(selection, separators=(",", ":")),
+            }
+            async with self._req_lock:
+                await self._wait_min_interval()
+                try:
+                    resp = await self._client.get(
+                        f"{KEEPA_BASE_URL}/query", params=params
+                    )
+                except httpx.HTTPError as exc:
+                    log.warning("Keepa Product Finder failed: %s", exc)
+                    break
+            try:
+                data = resp.json()
+                self._track_tokens(data)
+            except Exception:  # noqa: BLE001
+                data = {}
+            if resp.status_code == 403:
+                self._trigger_403_cooldown(resp.text)
+                break
+            if resp.status_code != 200:
+                log.warning(
+                    "Keepa /query (Product Finder) page=%d %s: %s",
+                    page,
+                    resp.status_code,
+                    resp.text[:200],
+                )
+                break
+            self._clear_403()
+
+            page_asins = [
+                a for a in (data.get("asinList") or []) if isinstance(a, str)
+            ]
+            if not page_asins:
+                break
+            out.extend(page_asins)
+            log.info(
+                "Product Finder page=%d -> %d ASIN (累計 %d)",
+                page,
+                len(page_asins),
+                len(out),
             )
-        except httpx.HTTPError as exc:
-            log.warning("Keepa Product Finder failed: %s", exc)
-            return []
-        try:
-            data = resp.json()
-            self._track_tokens(data)
-        except Exception:  # noqa: BLE001
-            return []
-        if resp.status_code != 200:
-            log.warning(
-                "Keepa /query (Product Finder) %s: %s",
-                resp.status_code,
-                resp.text[:200],
-            )
-            return []
-        asin_list = data.get("asinList") or []
-        return [a for a in asin_list if isinstance(a, str)]
+            # 1 ページが per_page 未満なら結果尽き
+            if len(page_asins) < this_page:
+                break
+            page += 1
+            if page > 100:  # 安全装置 (=最大 10000 件)
+                break
+
+        return out[: target if not unlimited else len(out)]
 
     # ------------------------------------------------------------------
     # Product
@@ -624,10 +662,11 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
         media_type = "book"
 
     asin = product.get("asin")
-    # 価格履歴グラフは Keepa の公開エンドポイント。キー無しで動くので
-    # ブラウザから直接埋め込む。
+    # 価格履歴グラフは Keepa の公開エンドポイント。線種を明示することで
+    # 一部の minimum URL 構成で 403 を返すケースを回避する。
     keepa_graph_url = (
-        f"https://graph.keepa.com/pricehistory.png?asin={asin}&domain=5&width=600&height=200"
+        "https://graph.keepa.com/pricehistory.png"
+        f"?asin={asin}&domain=5&amazon=1&new=1&used=1&salesrank=1&bb=1&width=600&height=200"
         if asin
         else None
     )
