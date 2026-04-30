@@ -624,8 +624,13 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
         media_type = "book"
 
     asin = product.get("asin")
-    # 価格履歴グラフは API キーが必要なのでバックエンド proxy 経由で取得する。
-    keepa_graph_url = f"/api/keepa-graph/{asin}" if asin else None
+    # 価格履歴グラフは Keepa の公開エンドポイント。キー無しで動くので
+    # ブラウザから直接埋め込む。
+    keepa_graph_url = (
+        f"https://graph.keepa.com/pricehistory.png?asin={asin}&domain=5&width=600&height=200"
+        if asin
+        else None
+    )
     return {
         "asin": asin,
         "jan": jan,
