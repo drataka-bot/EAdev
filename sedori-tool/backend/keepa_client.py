@@ -27,6 +27,10 @@ DEFAULT_DOMAIN = 5  # Amazon.co.jp
 DEFAULT_BATCH_SIZE = 100
 DEFAULT_BATCH_SLEEP_SEC = 1.2
 REQUEST_TIMEOUT_SEC = 60.0
+# Keepa への最小リクエスト間隔。同一 IP からの瞬間バーストを抑え 403 を減らす。
+MIN_REQUEST_INTERVAL_SEC = 0.6
+# 403 の累積回数に応じてクールダウンを段階的に伸ばす。
+COOLDOWN_BACKOFF_SEC = (60.0, 180.0, 600.0)
 
 # Keepa CSV インデックス (一部)
 CSV_AMAZON = 0
@@ -82,6 +86,11 @@ class KeepaClient:
         self.last_refill_in_ms: Optional[int] = None
         # 403 を受けた場合のクールダウン期限 (monotonic 秒)
         self._blocked_until: float = 0.0
+        # 403 の連続回数。回数に応じてクールダウンを段階的に伸ばす。
+        self._consecutive_403: int = 0
+        # 同時呼び出しを直列化 + IP レート制限対策のための間隔保持
+        self._req_lock = asyncio.Lock()
+        self._last_request_at: float = 0.0
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -101,6 +110,31 @@ class KeepaClient:
                 self.last_refill_in_ms = int(ri)
         except Exception:
             pass
+
+    async def _wait_min_interval(self) -> None:
+        """最終リクエストから MIN_REQUEST_INTERVAL_SEC を必ず空ける。"""
+        elapsed = time.monotonic() - self._last_request_at
+        if elapsed < MIN_REQUEST_INTERVAL_SEC:
+            await asyncio.sleep(MIN_REQUEST_INTERVAL_SEC - elapsed)
+        self._last_request_at = time.monotonic()
+
+    def _trigger_403_cooldown(self, body_text: str) -> None:
+        """403 受信時のクールダウンを段階的に伸ばす。"""
+        idx = min(self._consecutive_403, len(COOLDOWN_BACKOFF_SEC) - 1)
+        wait = COOLDOWN_BACKOFF_SEC[idx]
+        self._consecutive_403 += 1
+        self._blocked_until = time.monotonic() + wait
+        log.error(
+            "Keepa 403 (%d回目): %ss クールダウン。応答: %s\n"
+            "  → 連続発生時はサブスク残量や IP ブロック解除を Keepa ダッシュボードで確認してください。",
+            self._consecutive_403,
+            int(wait),
+            body_text[:200],
+        )
+
+    def _clear_403(self) -> None:
+        if self._consecutive_403:
+            self._consecutive_403 = 0
 
     async def _wait_for_tokens(self, needed: int) -> None:
         """残トークンが必要量を下回りそうなら refill 完了まで sleep。"""
@@ -133,27 +167,27 @@ class KeepaClient:
             "type": "product",
             "term": jan,
         }
-        try:
-            resp = await self._client.get(f"{KEEPA_BASE_URL}/query", params=params)
-        except httpx.HTTPError as exc:
-            log.warning("Keepa /query request failed: %s", exc)
-            return None
+        async with self._req_lock:
+            await self._wait_min_interval()
+            try:
+                resp = await self._client.get(
+                    f"{KEEPA_BASE_URL}/query", params=params
+                )
+            except httpx.HTTPError as exc:
+                log.warning("Keepa /query request failed: %s", exc)
+                return None
         try:
             data = resp.json()
             self._track_tokens(data)
         except Exception:  # noqa: BLE001
             data = {}
         if resp.status_code == 403:
-            self._blocked_until = time.monotonic() + 300.0
-            log.error(
-                "Keepa /query 403: %s\n"
-                "  → API キー無効 / IP ブロック / サブスク期限切れの可能性。5分クールダウン。",
-                resp.text[:200],
-            )
+            self._trigger_403_cooldown(resp.text)
             return None
         if resp.status_code != 200:
             log.warning("Keepa /query returned %s: %s", resp.status_code, resp.text[:200])
             return None
+        self._clear_403()
         asins = data.get("asinList") or data.get("asins") or []
         if isinstance(asins, list) and asins:
             return asins[0]
@@ -255,24 +289,25 @@ class KeepaClient:
                 await asyncio.sleep(self.batch_sleep_sec)
 
     async def _fetch_with_retry(self, params: dict[str, Any]) -> list[dict[str, Any]]:
-        """最大 2 回まで 429/5xx をリトライしつつ /product を叩く。"""
-        # 403 クールダウン中は呼ばない
+        """最大 3 回まで 429/5xx をリトライしつつ /product を叩く。"""
         if self._blocked_until and time.monotonic() < self._blocked_until:
             wait = self._blocked_until - time.monotonic()
             log.warning("Keepa: 403 後のクールダウン中 (残 %.0fs)。スキップ。", wait)
             return []
 
         for attempt in range(3):
-            try:
-                resp = await self._client.get(
-                    f"{KEEPA_BASE_URL}/product", params=params
-                )
-            except httpx.HTTPError as exc:
-                log.warning("Keepa /product request failed: %s", exc)
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                return []
+            async with self._req_lock:
+                await self._wait_min_interval()
+                try:
+                    resp = await self._client.get(
+                        f"{KEEPA_BASE_URL}/product", params=params
+                    )
+                except httpx.HTTPError as exc:
+                    log.warning("Keepa /product request failed: %s", exc)
+                    if attempt < 2:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    return []
 
             try:
                 data = resp.json()
@@ -281,6 +316,7 @@ class KeepaClient:
                 data = {}
 
             if resp.status_code == 200:
+                self._clear_403()
                 return data.get("products") or []
 
             if resp.status_code == 429 and attempt < 2:
@@ -295,15 +331,7 @@ class KeepaClient:
                 continue
 
             if resp.status_code == 403:
-                # 403 は API キー無効 / IP ブロック / サブスク期限切れの可能性。
-                # 短時間のリトライでは回復しないため、5 分クールダウン。
-                self._blocked_until = time.monotonic() + 300.0
-                log.error(
-                    "Keepa 403 Forbidden: %s\n"
-                    "  → API キーが無効、サブスク期限切れ、または IP ブロックの可能性。\n"
-                    "  → 5 分クールダウンしてから次回再試行します。",
-                    resp.text[:200],
-                )
+                self._trigger_403_cooldown(resp.text)
                 return []
 
             if 500 <= resp.status_code < 600 and attempt < 2:
@@ -535,8 +563,10 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
     if isinstance(images_csv, str) and images_csv.strip():
         first = images_csv.split(",")[0].strip()
         if first:
-            # Keepa は商品によって拡張子無しで返すことがあるので補完
-            if "." not in first:
+            # 既に画像拡張子が含まれていれば二重付与しない
+            lower = first.lower()
+            known_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp")
+            if not any(lower.endswith(ext) for ext in known_exts):
                 first = f"{first}.jpg"
             image_url = f"https://m.media-amazon.com/images/I/{first}"
 
