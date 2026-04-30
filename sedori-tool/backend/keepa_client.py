@@ -233,16 +233,21 @@ class KeepaClient:
         while len(out) < target:
             remaining = target - len(out)
             this_page = min(per_page, remaining)
-            selection = {
+            # Keepa JP の Product Finder は price 値を yen 単位 (×100 ではない)
+            # で受け取る。フィルタは値が指定された時だけ付ける。
+            selection: dict[str, Any] = {
                 "domainId": self.domain,
-                "current_LISTPRICE_gte": 100,
-                "salesRankDrops30_gte": int(min_drops30),
-                "current_NEW_gte": int(min_price) * 100,
-                "current_NEW_lte": int(max_price) * 100,
+                "current_LISTPRICE_gte": 1,  # 定価が登録されている商品
                 "perPage": this_page,
                 "page": page,
                 "sort": [["salesRankDrops30", "desc"]],
             }
+            if int(min_drops30) > 0:
+                selection["salesRankDrops30_gte"] = int(min_drops30)
+            if int(min_price) > 0:
+                selection["current_NEW_gte"] = int(min_price)
+            if int(max_price) > 0:
+                selection["current_NEW_lte"] = int(max_price)
             if category_id is not None:
                 selection["categories_include"] = [int(category_id)]
 
@@ -250,6 +255,7 @@ class KeepaClient:
                 "key": self.api_key,
                 "selection": json.dumps(selection, separators=(",", ":")),
             }
+            log.info("Product Finder query (page=%d): %s", page, json.dumps(selection))
             async with self._req_lock:
                 await self._wait_min_interval()
                 try:
@@ -272,14 +278,20 @@ class KeepaClient:
                     "Keepa /query (Product Finder) page=%d %s: %s",
                     page,
                     resp.status_code,
-                    resp.text[:200],
+                    resp.text[:500],
                 )
                 break
             self._clear_403()
 
-            page_asins = [
-                a for a in (data.get("asinList") or []) if isinstance(a, str)
-            ]
+            asin_list = data.get("asinList") or []
+            log.info(
+                "Product Finder page=%d resp keys=%s asinList(len)=%s totalResults=%s",
+                page,
+                list(data.keys())[:10],
+                len(asin_list) if isinstance(asin_list, list) else "?",
+                data.get("totalResults"),
+            )
+            page_asins = [a for a in asin_list if isinstance(a, str)]
             if not page_asins:
                 break
             out.extend(page_asins)
