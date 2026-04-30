@@ -1180,11 +1180,28 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                           src={item.image_url}
                           alt=""
                           loading="lazy"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            const img = e.currentTarget;
+                            console.warn("image load failed:", img.src);
+                            img.style.display = "none";
+                            const sib = img.nextElementSibling as HTMLElement | null;
+                            if (sib) sib.style.display = "block";
+                          }}
                           className="w-12 h-12 object-contain border border-base-600 rounded bg-white/5"
                         />
+                        <div
+                          className="w-12 h-12 border border-red-500/50 rounded bg-red-500/10 text-[9px] text-red-300 flex items-center justify-center"
+                          style={{ display: "none" }}
+                          title={item.image_url ?? ""}
+                        >
+                          画像エラー
+                        </div>
                       </a>
                     ) : (
-                      <div className="w-12 h-12 border border-base-700 rounded bg-base-800" />
+                      <div className="w-12 h-12 border border-base-700 rounded bg-base-800 text-[9px] text-gray-600 flex items-center justify-center">
+                        画像なし
+                      </div>
                     )}
                   </td>
                 )}
@@ -1802,6 +1819,27 @@ function KeepaGraphCell({
   keepaUrl: string | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState(false);
+  if (error) {
+    return (
+      <div
+        className="text-[9px] text-red-300 px-2 py-1 border border-red-500/40 rounded"
+        title="グラフ取得失敗 (Keepa キー未設定 / バックエンド未再起動の可能性)"
+      >
+        グラフエラー
+        {keepaUrl && (
+          <a
+            href={keepaUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="block text-accent text-[9px] mt-0.5"
+          >
+            Keepa で開く
+          </a>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="relative inline-block">
       <button
@@ -1814,6 +1852,11 @@ function KeepaGraphCell({
           src={graphUrl}
           alt="Keepa price graph"
           loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={(e) => {
+            console.warn("Keepa graph load failed:", e.currentTarget.src);
+            setError(true);
+          }}
           className="w-24 h-auto border border-base-500 rounded hover:border-accent"
         />
       </button>
