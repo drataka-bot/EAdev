@@ -14,8 +14,7 @@ from typing import Any, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -393,13 +392,12 @@ async def find_premium(req: FindPremiumRequest) -> dict[str, Any]:
 
 
 @app.get("/api/keepa-graph/{asin}")
-async def keepa_graph(asin: str, width: int = 600, height: int = 200) -> RedirectResponse:
-    """Keepa 価格履歴 PNG への 302 リダイレクト。
+async def keepa_graph(asin: str, width: int = 600, height: int = 200) -> Response:
+    """Keepa 価格履歴 PNG をバックエンドで取得してストリーミング返却する。
 
-    旧バージョンのフロントが /api/keepa-graph/... を叩いていても、ここで
-    Keepa の公開エンドポイントへ HTTP リダイレクトするので img タグは
-    そのまま画像を取得できる。キーは付けない (キー無し公開チャートが
-    最も互換性が高い)。
+    img タグからの直アクセスでは Keepa が Referer (localhost:5173) を見て
+    403 を返すケースがあるため、サーバー側で取得して同一オリジンで返す。
+    キーは付けない (キー無し公開チャートが最も互換性が高い)。
     """
     asin = (asin or "").strip().upper()
     if not ASIN_RE.match(asin):
@@ -412,7 +410,35 @@ async def keepa_graph(asin: str, width: int = 600, height: int = 200) -> Redirec
         "&amazon=1&new=1&used=1&salesrank=1&bb=1"
         f"&width={width}&height={height}"
     )
-    return RedirectResponse(url=url, status_code=302)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
+        ),
+        "Accept": "image/webp,image/avif,image/png,image/*,*/*;q=0.8",
+        "Accept-Language": "ja,en;q=0.9",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        log.warning("Keepa graph fetch failed for %s: %s", asin, exc)
+        raise HTTPException(status_code=502, detail="upstream fetch failed") from exc
+    if resp.status_code != 200:
+        log.warning(
+            "Keepa graph %s for %s (len=%d)",
+            resp.status_code,
+            asin,
+            len(resp.content) if resp.content else 0,
+        )
+        raise HTTPException(
+            status_code=resp.status_code, detail="keepa graph error"
+        )
+    return Response(
+        content=resp.content,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=600"},
+    )
 
 
 @app.post("/api/score", response_model=ScoreResponse)
