@@ -1497,20 +1497,14 @@ export function ResultTable({ items, onPurchasePriceChange, onExport }: Props) {
                 </td>
                 {isCol("keepa_graph") && (
                   <td className="px-3 py-2 text-center">
-                    {item.keepa_graph_url ? (
+                    {item.asin ? (
                       <KeepaGraphCell
-                        graphUrl={item.keepa_graph_url}
-                        keepaUrl={item.keepa_url}
+                        graphUrl={`https://graph.keepa.com/pricehistory.png?asin=${item.asin}&domain=5&amazon=1&new=1&used=1&salesrank=1&bb=1&width=600&height=200`}
+                        keepaUrl={
+                          item.keepa_url ??
+                          `https://keepa.com/#!product/5-${item.asin}`
+                        }
                       />
-                    ) : item.keepa_url ? (
-                      <a
-                        href={item.keepa_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-accent hover:underline text-xs"
-                      >
-                        開く
-                      </a>
                     ) : (
                       "-"
                     )}
