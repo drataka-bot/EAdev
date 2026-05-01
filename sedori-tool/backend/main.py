@@ -391,7 +391,17 @@ async def find_premium(req: FindPremiumRequest) -> dict[str, Any]:
     }
 
 
-_AMAZON_IMAGE_FILENAME_RE = re.compile(r"^[A-Za-z0-9._+\-]{1,200}$")
+# Amazon CDN の画像ファイル名は英数字 + . _ + - で構成される。
+_AMAZON_IMAGE_FILENAME_RE = re.compile(r"^[A-Za-z0-9._+\-_]{1,200}$")
+
+
+def _is_valid_amazon_image_filename(filename: str) -> bool:
+    if not _AMAZON_IMAGE_FILENAME_RE.match(filename):
+        return False
+    # path traversal 対策
+    if ".." in filename or "/" in filename:
+        return False
+    return True
 
 
 @app.get("/api/amazon-image/{filename}")
@@ -402,7 +412,7 @@ async def amazon_image(filename: str) -> Response:
     拒否するケースがあるため、サーバー側でブラウザ風ヘッダで取得して
     同一オリジンで返す。
     """
-    if not _AMAZON_IMAGE_FILENAME_RE.match(filename):
+    if not _is_valid_amazon_image_filename(filename):
         raise HTTPException(status_code=400, detail="invalid filename")
     url = f"https://m.media-amazon.com/images/I/{filename}"
     headers = {
@@ -436,8 +446,8 @@ async def amazon_image(filename: str) -> Response:
 @app.get("/api/keepa-graph/{asin}")
 async def keepa_graph(
     asin: str,
-    width: int = 700,
-    height: int = 320,
+    width: int = 800,
+    height: int = 380,
     range: int = 365,
 ) -> Response:
     """Keepa 価格履歴 PNG をバックエンドで取得してストリーミング返却する。
@@ -448,7 +458,8 @@ async def keepa_graph(
 
     パラメータ既定値:
       - range=365 (1 年分の履歴)
-      - 価格 (amazon/new/used/buybox/list price/FBA) + ランキング を全表示
+      - amazon / new / used / buybox / sales rank の主要 5 系統表示
+      - 800x380 でランキング (右 Y 軸) も見やすいサイズ
     """
     asin = (asin or "").strip().upper()
     if not ASIN_RE.match(asin):
@@ -459,7 +470,7 @@ async def keepa_graph(
     url = (
         "https://graph.keepa.com/pricehistory.png"
         f"?asin={asin}&domain={KEEPA_DOMAIN}"
-        "&amazon=1&new=1&used=1&salesrank=1&bb=1&fba=1&lp=1"
+        "&amazon=1&new=1&used=1&salesrank=1&bb=1&srnf=1"
         f"&range={range_days}"
         f"&width={width}&height={height}"
     )

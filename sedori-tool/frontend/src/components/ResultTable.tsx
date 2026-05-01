@@ -1843,7 +1843,7 @@ function KeepaGraphCell({
             console.warn("Keepa graph load failed:", e.currentTarget.src);
             setError(true);
           }}
-          className="w-56 h-auto border border-base-500 rounded hover:border-accent"
+          className="w-80 h-auto border border-base-500 rounded hover:border-accent"
         />
       </button>
       {open && (
